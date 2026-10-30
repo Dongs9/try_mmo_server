@@ -3,12 +3,14 @@ classDiagram
 
     class Zone {
         -nextEntityId_
+        -nextPlayerNumber_
         -tick_
         +addPlayer()
         +removePlayer(id)
         +setDestination(id, destination)
         +tick()
         -movePlayers()
+        -updateSlimes()
         -updateVisibility()
         -sendPositions()
     }
@@ -21,8 +23,17 @@ classDiagram
         +destination
         +visible
     }
+    class Slime {
+        +id
+        +spawnPoint
+        +position
+        +hp
+        +destination
+        +nextWanderTick
+    }
     class EntityView {
         +id
+        +type
         +name
         +maxHp
         +position
@@ -37,5 +48,6 @@ classDiagram
     }
 
     Zone *-- Player : 최대 100명
+    Zone *-- Slime : 30마리
     Zone ..> EntityView : 등장 때 생성
     Zone ..> EntitySnapshot : 틱마다 생성

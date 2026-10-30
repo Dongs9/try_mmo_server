@@ -1,6 +1,7 @@
 #include "Zone.h"
 
 #include <cmath>
+#include <numbers>
 
 namespace trymmo
 {
@@ -15,6 +16,16 @@ constexpr float kMoveStepPerTick = 10.0f;  // 초당 100, 10Hz
 constexpr float kAoiEnterDistance = 700.0f;
 constexpr float kAoiLeaveDistance = 800.0f;
 
+constexpr int kSlimeCount = 30;
+constexpr int kSlimeMaxHp = 120;
+constexpr int kSlimeLevel = 1;
+constexpr float kSlimeSpawnRadius = 600.0f;
+constexpr float kSlimeSafeRadius = 100.0f;  // 입장 위치 주변은 생성 구역에서 뺀다
+constexpr float kSlimeWanderRadius = 100.0f;
+constexpr float kSlimeWanderStepPerTick = 4.0f;  // 초당 40
+constexpr int kSlimeWanderMinTicks = 30;
+constexpr int kSlimeWanderMaxTicks = 60;
+
 float distanceSquared(Vec2 a, Vec2 b)
 {
     const float dx = a.x - b.x;
@@ -28,6 +39,28 @@ bool isInsideMap(Vec2 position)
     return position.x >= 0.0f && position.x <= kMapSize
         && position.y >= 0.0f && position.y <= kMapSize;
 }
+
+// 도착하면 true. 남은 거리가 이동량 이하이면 목적지에 정확히 놓는다.
+bool moveToward(Vec2& position, Vec2 destination, float step)
+{
+    const float remaining = std::sqrt(distanceSquared(position, destination));
+    if (remaining <= step)
+    {
+        position = destination;
+        return true;
+    }
+
+    const float ratio = step / remaining;
+    position.x += (destination.x - position.x) * ratio;
+    position.y += (destination.y - position.y) * ratio;
+    return false;
+}
+}
+
+Zone::Zone(IZoneObserver& observer)
+    : observer_(observer), random_(std::random_device{}())
+{
+    spawnSlimes();
 }
 
 std::optional<EntityView> Zone::addPlayer()
@@ -39,7 +72,7 @@ std::optional<EntityView> Zone::addPlayer()
 
     auto player = std::make_unique<Player>();
     player->id = nextEntityId_++;
-    player->name = "Player" + std::to_string(player->id);
+    player->name = "Player" + std::to_string(nextPlayerNumber_++);
     player->position = kEnterPosition;
     player->hp = kPlayerMaxHp;
     player->level = kPlayerStartLevel;
@@ -76,62 +109,113 @@ void Zone::tick()
 {
     ++tick_;
     movePlayers();
+    updateSlimes();
     updateVisibility();
     sendPositions();
+}
+
+void Zone::spawnSlimes()
+{
+    for (int i = 0; i < kSlimeCount; ++i)
+    {
+        auto slime = std::make_unique<Slime>();
+        slime->id = nextEntityId_++;
+        slime->spawnPoint = randomSlimeSpawnPoint();
+        slime->position = slime->spawnPoint;
+        slime->hp = kSlimeMaxHp;
+        slime->nextWanderTick = std::uniform_int_distribution<int>(0, kSlimeWanderMaxTicks)(random_);
+        slimes_.emplace(slime->id, std::move(slime));
+    }
+}
+
+Vec2 Zone::randomSlimeSpawnPoint()
+{
+    // 원 안 고른 분포에서 입장 위치 주변만 다시 뽑는다.
+    for (;;)
+    {
+        const Vec2 point = randomPointNear(kEnterPosition, kSlimeSpawnRadius);
+        if (distanceSquared(point, kEnterPosition) > kSlimeSafeRadius * kSlimeSafeRadius)
+        {
+            return point;
+        }
+    }
+}
+
+Vec2 Zone::randomPointNear(Vec2 center, float radius)
+{
+    // 반지름에 제곱근을 씌워야 원 안에 고르게 퍼진다.
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    const float distance = radius * std::sqrt(unit(random_));
+    const float angle = 2.0f * std::numbers::pi_v<float> * unit(random_);
+    return {center.x + distance * std::cos(angle), center.y + distance * std::sin(angle)};
 }
 
 void Zone::movePlayers()
 {
     for (const auto& [id, player] : players_)
     {
-        if (!player->destination)
+        if (player->destination && moveToward(player->position, *player->destination, kMoveStepPerTick))
         {
-            continue;
-        }
-
-        const Vec2 destination = *player->destination;
-        const float remaining = std::sqrt(distanceSquared(player->position, destination));
-        if (remaining <= kMoveStepPerTick)
-        {
-            player->position = destination;
             player->destination.reset();
-            continue;
         }
+    }
+}
 
-        const float ratio = kMoveStepPerTick / remaining;
-        player->position.x += (destination.x - player->position.x) * ratio;
-        player->position.y += (destination.y - player->position.y) * ratio;
+void Zone::updateSlimes()
+{
+    std::uniform_int_distribution<int> wanderDelay(kSlimeWanderMinTicks, kSlimeWanderMaxTicks);
+    for (const auto& [id, slime] : slimes_)
+    {
+        if (slime->destination)
+        {
+            if (moveToward(slime->position, *slime->destination, kSlimeWanderStepPerTick))
+            {
+                slime->destination.reset();
+            }
+        }
+        else if (tick_ >= slime->nextWanderTick)
+        {
+            slime->destination = randomPointNear(slime->spawnPoint, kSlimeWanderRadius);
+            slime->nextWanderTick = tick_ + wanderDelay(random_);
+        }
     }
 }
 
 void Zone::updateVisibility()
 {
-    constexpr float enter = kAoiEnterDistance * kAoiEnterDistance;
-    constexpr float leave = kAoiLeaveDistance * kAoiLeaveDistance;
-
-    // P1은 100명 이하이므로 전체 쌍을 단순 거리로 계산한다. 공간 분할은 P5에서 다룬다.
+    // P1~P4는 100명 이하이므로 전체 쌍을 단순 거리로 계산한다. 공간 분할은 P5에서 다룬다.
     for (const auto& [viewerId, viewer] : players_)
     {
         for (const auto& [otherId, other] : players_)
         {
-            if (viewerId == otherId)
+            if (viewerId != otherId)
             {
-                continue;
-            }
-
-            const float distance = distanceSquared(viewer->position, other->position);
-            const bool isVisible = viewer->visible.contains(otherId);
-            if (!isVisible && distance <= enter)
-            {
-                viewer->visible.insert(otherId);
-                observer_.onEntitySpawn(viewerId, makeView(*other));
-            }
-            else if (isVisible && distance > leave)
-            {
-                viewer->visible.erase(otherId);
-                observer_.onEntityDespawn(viewerId, otherId, DespawnReason::OutOfAoi);
+                updateVisibilityOf(*viewer, otherId, other->position, makeView(*other));
             }
         }
+        for (const auto& [slimeId, slime] : slimes_)
+        {
+            updateVisibilityOf(*viewer, slimeId, slime->position, makeView(*slime));
+        }
+    }
+}
+
+void Zone::updateVisibilityOf(Player& viewer, EntityId other, Vec2 otherPosition, const EntityView& view)
+{
+    constexpr float enter = kAoiEnterDistance * kAoiEnterDistance;
+    constexpr float leave = kAoiLeaveDistance * kAoiLeaveDistance;
+
+    const float distance = distanceSquared(viewer.position, otherPosition);
+    const bool isVisible = viewer.visible.contains(other);
+    if (!isVisible && distance <= enter)
+    {
+        viewer.visible.insert(other);
+        observer_.onEntitySpawn(viewer.id, view);
+    }
+    else if (isVisible && distance > leave)
+    {
+        viewer.visible.erase(other);
+        observer_.onEntityDespawn(viewer.id, other, DespawnReason::OutOfAoi);
     }
 }
 
@@ -144,21 +228,42 @@ void Zone::sendPositions()
         entities.push_back(makeSnapshot(*viewer));
         for (const EntityId otherId : viewer->visible)
         {
-            entities.push_back(makeSnapshot(*players_.at(otherId)));
+            entities.push_back(makeSnapshot(otherId));
         }
         observer_.onPositionSync(viewerId, tick_, entities);
     }
 }
 
+EntitySnapshot Zone::makeSnapshot(EntityId id) const
+{
+    if (const auto player = players_.find(id); player != players_.end())
+    {
+        return makeSnapshot(*player->second);
+    }
+    return makeSnapshot(*slimes_.at(id));
+}
+
 EntityView Zone::makeView(const Player& player)
 {
-    return {player.id, player.name, kPlayerMaxHp, player.position,
+    return {player.id, EntityType::Player, player.name, kPlayerMaxHp, player.position,
             player.destination ? EntityState::Moving : EntityState::Idle};
+}
+
+EntityView Zone::makeView(const Slime& slime)
+{
+    return {slime.id, EntityType::Slime, "푸른 슬라임", kSlimeMaxHp, slime.position,
+            slime.destination ? EntityState::Moving : EntityState::Idle};
 }
 
 EntitySnapshot Zone::makeSnapshot(const Player& player)
 {
     return {player.id, player.position, player.destination ? EntityState::Moving : EntityState::Idle,
             player.hp, player.level};
+}
+
+EntitySnapshot Zone::makeSnapshot(const Slime& slime)
+{
+    return {slime.id, slime.position, slime.destination ? EntityState::Moving : EntityState::Idle,
+            slime.hp, kSlimeLevel};
 }
 }

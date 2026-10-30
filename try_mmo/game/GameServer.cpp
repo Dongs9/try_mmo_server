@@ -73,7 +73,7 @@ proto::EntityInfo toMessage(const EntityView& entity)
 {
     proto::EntityInfo info;
     info.set_entity_id(entity.id);
-    info.set_type(proto::ENTITY_TYPE_PLAYER);
+    info.set_type(entity.type == EntityType::Slime ? proto::ENTITY_TYPE_SLIME : proto::ENTITY_TYPE_PLAYER);
     info.set_name(entity.name);
     info.set_max_hp(entity.maxHp);
     *info.mutable_position() = toMessage(entity.position);

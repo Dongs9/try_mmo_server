@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -138,6 +139,13 @@ public:
     const SeenPosition& position(std::uint32_t entity) const { return positions_.at(entity); }
     const std::vector<SeenPosition>& history(std::uint32_t entity) { return history_[entity]; }
     const std::vector<Despawn>& despawns() const { return despawns_; }
+    std::vector<Despawn> despawnsOf(std::uint32_t entity) const
+    {
+        std::vector<Despawn> result;
+        std::copy_if(despawns_.begin(), despawns_.end(), std::back_inserter(result),
+                     [&](const Despawn& despawn) { return despawn.entity == entity; });
+        return result;
+    }
 
 private:
     void extractFrames()
@@ -319,7 +327,8 @@ void testAoi(std::uint16_t port)
     a.moveTo(1600.0f, 1600.0f);
     const bool left = b.waitUntil(15s, [&] { return !b.spawned(a.selfId()); });
     check(left, "a left aoi of b");
-    check(!b.despawns().empty() && b.despawns().back().reason == proto::DESPAWN_REASON_OUT_OF_AOI, "reason is out of aoi");
+    check(!b.despawnsOf(a.selfId()).empty() && b.despawnsOf(a.selfId()).back().reason == proto::DESPAWN_REASON_OUT_OF_AOI,
+          "reason is out of aoi");
     a.waitUntil(5s, [&] { return a.sees(a.selfId()) && a.position(a.selfId()).state == proto::ENTITY_STATE_IDLE; });
     const float distance = std::hypot(a.position(a.selfId()).x - 800.0f, a.position(a.selfId()).y - 800.0f);
     std::cout << "[INFO] a stopped at distance " << distance << '\n';
@@ -358,7 +367,7 @@ void testAoiBoundary(std::uint16_t port)
     for (int round = 1; round <= 2; ++round)
     {
         const std::string prefix = "round " + std::to_string(round) + ": ";
-        const std::size_t despawnsBefore = b.despawns().size();
+        const std::size_t despawnsBefore = b.despawnsOf(a.selfId()).size();
 
         check(moveAndArrive(a, 1100.0f, 800.0f), prefix + "a arrived at distance 800");
         b.pump(300ms);
@@ -374,7 +383,7 @@ void testAoiBoundary(std::uint16_t port)
         check(moveAndArrive(a, 1000.0f, 800.0f), prefix + "a arrived at distance 700");
         check(b.waitUntil(1s, [&] { return b.spawned(a.selfId()); }), prefix + "entered aoi at distance 700");
 
-        check(b.despawns().size() == despawnsBefore + 1, prefix + "exactly one despawn");
+        check(b.despawnsOf(a.selfId()).size() == despawnsBefore + 1, prefix + "exactly one despawn");
     }
 }
 
@@ -389,9 +398,8 @@ void testDisconnect(std::uint16_t port)
         otherId = b.selfId();
         a.waitUntil(2s, [&] { return a.sees(otherId); });
     }
-    check(a.waitUntil(2s, [&] { return !a.despawns().empty(); }), "disconnect despawns");
-    check(!a.despawns().empty() && a.despawns().back().entity == otherId
-              && a.despawns().back().reason == proto::DESPAWN_REASON_LEFT,
+    check(a.waitUntil(2s, [&] { return !a.despawnsOf(otherId).empty(); }), "disconnect despawns");
+    check(!a.despawnsOf(otherId).empty() && a.despawnsOf(otherId).back().reason == proto::DESPAWN_REASON_LEFT,
           "reason is left");
 }
 
