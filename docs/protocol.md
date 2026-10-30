@@ -6,8 +6,7 @@
 | --- | --- |
 | [common.proto](../proto/common.proto) | 공용 타입: `Vec2`, `EntityType`, `EntityState` |
 | [packet.proto](../proto/packet.proto) | `MsgId`와 클라이언트↔서버 메시지 전부. `common.proto`만 import |
-
-서버 내부 메시지가 필요해지면 `server.proto`를 추가합니다.
+| [server.proto](../proto/server.proto) | 서버 내부 전용 메시지. 지금은 비어 있음. 클라이언트 C# 생성에는 포함하지 않음 |
 
 ## 코드 생성
 
@@ -17,7 +16,7 @@
 vcpkg_installed\x64-windows-static-md\tools\protobuf\protoc.exe
 ```
 
-C++ 코드는 `try_mmo_proto` 프로젝트를 빌드하면 생성됩니다. `.proto` 파일을 하나씩 따로 생성하지 말고 두 파일을 함께 생성하세요.
+C++ 코드는 `try_mmo_proto` 프로젝트를 빌드하면 세 파일 모두 생성됩니다. 클라이언트 C# 코드는 `common.proto`와 `packet.proto`만 함께 생성합니다.
 
 ## 메시지 번호
 
