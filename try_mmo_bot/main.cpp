@@ -39,7 +39,40 @@ struct Despawn
 {
     std::uint32_t entity = 0;
     proto::DespawnReason reason = proto::DESPAWN_REASON_UNSPECIFIED;
+    std::uint32_t tick = 0;
+    int sequence = 0;
 };
+
+struct SpawnRecord
+{
+    proto::EntityType type = proto::ENTITY_TYPE_UNSPECIFIED;
+    float x = 0.0f;
+    float y = 0.0f;
+    std::uint32_t tick = 0;
+};
+
+struct Hit
+{
+    std::uint32_t attacker = 0;
+    std::uint32_t target = 0;
+    int damage = 0;
+    int targetHp = 0;
+    std::uint32_t tick = 0;
+    int sequence = 0;
+    float distance = -1.0f;  // 직전 스냅샷 기준 두 개체의 거리
+};
+
+struct Death
+{
+    std::uint32_t entity = 0;
+    std::uint32_t reviveTick = 0;
+    std::uint32_t tick = 0;
+};
+
+float distanceBetween(float ax, float ay, float bx, float by)
+{
+    return std::hypot(ax - bx, ay - by);
+}
 
 class Client
 {
@@ -86,6 +119,13 @@ public:
         request.mutable_destination()->set_x(x);
         request.mutable_destination()->set_y(y);
         sendMessage(proto::C2S_MOVE_REQ, request);
+    }
+
+    void target(std::uint32_t entity)
+    {
+        proto::TargetReq request;
+        request.set_target_id(entity);
+        sendMessage(proto::C2S_TARGET_REQ, request);
     }
 
     // 주어진 시간 동안 받은 메시지를 상태에 반영한다.
@@ -146,6 +186,43 @@ public:
                      [&](const Despawn& despawn) { return despawn.entity == entity; });
         return result;
     }
+    std::vector<Hit> hitsBy(std::uint32_t attacker, std::uint32_t target) const
+    {
+        std::vector<Hit> result;
+        std::copy_if(hits_.begin(), hits_.end(), std::back_inserter(result),
+                     [&](const Hit& hit) { return hit.attacker == attacker && hit.target == target; });
+        return result;
+    }
+    const std::vector<proto::RejectReason>& rejects() const { return rejects_; }
+    const std::vector<Death>& deaths() const { return deaths_; }
+    const SpawnRecord& spawnRecord(std::uint32_t entity) const { return spawnRecords_.at(entity); }
+
+    // 위치를 아는 슬라임 중 가장 가까운 것. 없으면 0.
+    std::uint32_t nearestSlime(std::uint32_t except = 0) const
+    {
+        std::uint32_t best = 0;
+        float bestDistance = 1e9f;
+        if (!positions_.contains(selfId_))
+        {
+            return 0;
+        }
+        const SeenPosition& self = positions_.at(selfId_);
+        for (const auto& [id, seen] : positions_)
+        {
+            const auto record = spawnRecords_.find(id);
+            if (id == except || record == spawnRecords_.end() || record->second.type != proto::ENTITY_TYPE_SLIME)
+            {
+                continue;
+            }
+            const float distance = distanceBetween(self.x, self.y, seen.x, seen.y);
+            if (distance < bestDistance && seen.state != proto::ENTITY_STATE_RETURNING)
+            {
+                best = id;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
 
 private:
     void extractFrames()
@@ -183,6 +260,8 @@ private:
             proto::EntitySpawn message;
             trymmo::decodePayload(payload, message);
             spawned_[message.entity().entity_id()] = true;
+            spawnRecords_[message.entity().entity_id()] = {message.entity().type(), message.entity().position().x(),
+                                                           message.entity().position().y(), lastTick_};
             break;
         }
         case proto::S2C_ENTITY_DESPAWN:
@@ -191,7 +270,7 @@ private:
             trymmo::decodePayload(payload, message);
             spawned_.erase(message.entity_id());
             positions_.erase(message.entity_id());
-            despawns_.push_back({message.entity_id(), message.reason()});
+            despawns_.push_back({message.entity_id(), message.reason(), lastTick_, ++sequence_});
             break;
         }
         case proto::S2C_POSITION_SYNC:
@@ -206,6 +285,35 @@ private:
                 positions_[entity.entity_id()] = seen;
                 history_[entity.entity_id()].push_back(seen);
             }
+            break;
+        }
+        case proto::S2C_COMBAT_RESULT:
+        {
+            proto::CombatResult message;
+            trymmo::decodePayload(payload, message);
+            float distance = -1.0f;
+            if (positions_.contains(message.attacker_id()) && positions_.contains(message.target_id()))
+            {
+                const SeenPosition& attacker = positions_.at(message.attacker_id());
+                const SeenPosition& target = positions_.at(message.target_id());
+                distance = distanceBetween(attacker.x, attacker.y, target.x, target.y);
+            }
+            hits_.push_back({message.attacker_id(), message.target_id(), message.damage(), message.target_hp(),
+                             lastTick_, ++sequence_, distance});
+            break;
+        }
+        case proto::S2C_PLAYER_DEATH:
+        {
+            proto::PlayerDeath message;
+            trymmo::decodePayload(payload, message);
+            deaths_.push_back({message.entity_id(), message.revive_tick(), lastTick_});
+            break;
+        }
+        case proto::S2C_REQUEST_REJECTED:
+        {
+            proto::RequestRejected message;
+            trymmo::decodePayload(payload, message);
+            rejects_.push_back(message.reason());
             break;
         }
         default:
@@ -223,6 +331,11 @@ private:
     std::unordered_map<std::uint32_t, SeenPosition> positions_;
     std::unordered_map<std::uint32_t, std::vector<SeenPosition>> history_;
     std::vector<Despawn> despawns_;
+    std::unordered_map<std::uint32_t, SpawnRecord> spawnRecords_;
+    std::vector<Hit> hits_;
+    std::vector<proto::RejectReason> rejects_;
+    std::vector<Death> deaths_;
+    int sequence_ = 0;
 };
 
 int g_failures = 0;
@@ -461,6 +574,244 @@ void testRequestLimit(std::uint16_t port)
     check(a.waitUntil(3s, [&] { return a.position(a.selfId()).x == 830.0f; }), "requests accepted in next window");
 }
 
+void stopWhereYouAre(Client& client)
+{
+    const SeenPosition& self = client.position(client.selfId());
+    client.moveTo(self.x, self.y);
+}
+
+// 슬라임이 보일 때까지 기다리고 가장 가까운 슬라임을 돌려준다.
+std::uint32_t waitForSlime(Client& client, std::uint32_t except = 0)
+{
+    client.waitUntil(5s, [&] { return client.nearestSlime(except) != 0; });
+    return client.nearestSlime(except);
+}
+
+void testSlimeSpawn(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    const std::uint32_t slime = waitForSlime(a);
+    check(slime != 0, "slimes are visible after enter");
+    check(a.position(slime).hp == 120, "slime starts with 120 hp");
+
+    const SeenPosition before = a.position(slime);
+    a.pump(7s);
+    const SeenPosition after = a.position(slime);
+    check(before.x != after.x || before.y != after.y, "slime wanders");
+    check(after.hp == 120, "wandering slime keeps hp");
+}
+
+void testKillSlime(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+    const std::uint32_t slime = waitForSlime(a);
+    b.waitUntil(3s, [&] { return b.sees(slime); });
+    const SeenPosition start = a.position(slime);
+    const SeenPosition selfStart = a.position(a.selfId());
+    std::cout << "[INFO] target distance " << distanceBetween(selfStart.x, selfStart.y, start.x, start.y) << '\n';
+
+    a.target(slime);
+    check(a.waitUntil(40s, [&] { return !a.despawnsOf(slime).empty(); }), "slime killed");
+    b.waitUntil(3s, [&] { return !b.despawnsOf(slime).empty(); });
+
+    const auto hits = a.hitsBy(a.selfId(), slime);
+    const auto seenByB = b.hitsBy(a.selfId(), slime);
+    check(hits.size() == 3, "slime dies in 3 hits");
+
+    bool damageInRange = !hits.empty();
+    bool hpMatches = !hits.empty();
+    int hp = 120;
+    for (const Hit& hit : hits)
+    {
+        damageInRange = damageInRange && hit.damage >= 45 && hit.damage <= 47;
+        hp = std::max(hp - hit.damage, 0);
+        hpMatches = hpMatches && hit.targetHp == hp;
+    }
+    check(damageInRange, "damage is 45 to 47");
+    check(hpMatches && hp == 0, "hp decreases to 0");
+
+    // 타격 틱은 직전 스냅샷 기준이라 이동 1틱분(플레이어 10, 슬라임 4)만큼 멀 수 있다.
+    std::cout << "[INFO] first hit distance " << (hits.empty() ? -1.0f : hits.front().distance) << '\n';
+    check(!hits.empty() && hits.front().distance >= 0.0f && hits.front().distance <= 75.0f, "attacks from within range");
+
+    bool attackPeriod = hits.size() == 3;
+    for (std::size_t i = 1; i < hits.size(); ++i)
+    {
+        const std::uint32_t gap = hits[i].tick - hits[i - 1].tick;
+        std::cout << "[INFO] attack gap ticks " << gap << '\n';
+        attackPeriod = attackPeriod && gap >= 9 && gap <= 11;
+    }
+    check(attackPeriod, "attack period is 1 second");
+
+    bool sameOnBothScreens = seenByB.size() == hits.size() && !hits.empty();
+    for (std::size_t i = 0; sameOnBothScreens && i < hits.size(); ++i)
+    {
+        sameOnBothScreens = hits[i].damage == seenByB[i].damage && hits[i].targetHp == seenByB[i].targetHp;
+    }
+    check(sameOnBothScreens, "both clients see the same hp");
+
+    const auto despawns = a.despawnsOf(slime);
+    check(!despawns.empty() && despawns.back().reason == proto::DESPAWN_REASON_DIED, "despawn reason is died");
+    check(!despawns.empty() && !hits.empty() && hits.back().sequence < despawns.back().sequence,
+          "combat result comes before despawn");
+
+    a.target(slime);
+    check(a.waitUntil(2s, [&] { return !a.rejects().empty(); })
+              && a.rejects().back() == proto::REJECT_REASON_TARGET_DEAD, "dead target rejected");
+
+    a.target(999999);
+    check(a.waitUntil(2s, [&] { return a.rejects().size() >= 2; })
+              && a.rejects().back() == proto::REJECT_REASON_TARGET_NOT_FOUND, "unknown target rejected");
+
+    a.target(b.selfId());
+    check(a.waitUntil(2s, [&] { return a.rejects().size() >= 3; })
+              && a.rejects().back() == proto::REJECT_REASON_TARGET_NOT_FOUND, "player target rejected");
+
+    const std::uint32_t other = waitForSlime(a, slime);
+    a.target(other);
+    stopWhereYouAre(a);
+    a.pump(2500ms);
+    check(a.hitsBy(a.selfId(), other).empty(), "move input clears target");
+
+    const std::uint32_t deadTick = despawns.empty() ? 0 : despawns.back().tick;
+    check(a.waitUntil(35s, [&] { return a.spawned(slime) && a.sees(slime); }), "slime respawned");
+    if (a.sees(slime))
+    {
+        const SpawnRecord& record = a.spawnRecord(slime);
+        const std::uint32_t waited = record.tick - deadTick;
+        const float moved = distanceBetween(start.x, start.y, record.x, record.y);
+        std::cout << "[INFO] respawn after ticks " << waited << ", distance from first seen " << moved << '\n';
+        check(waited >= 299 && waited <= 301, "respawn takes 30 seconds");
+        check(moved <= 100.5f, "respawn at spawn point");
+        check(a.position(slime).hp == 120, "respawned slime has full hp");
+    }
+}
+
+void testChaseAndReturn(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    const std::uint32_t slime = waitForSlime(a);
+    const SeenPosition start = a.position(slime);
+
+    a.target(slime);
+    a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), slime).empty(); });
+    stopWhereYouAre(a);
+    const auto firstHits = a.hitsBy(a.selfId(), slime);
+    check(firstHits.size() == 1, "one hit before stopping");
+    const int slimeHp = firstHits.empty() ? 0 : firstHits.front().targetHp;
+
+    check(a.waitUntil(8s, [&] { return a.hitsBy(slime, a.selfId()).size() >= 2; }), "slime attacks its attacker");
+    const auto counter = a.hitsBy(slime, a.selfId());
+    if (counter.size() >= 2)
+    {
+        std::cout << "[INFO] slime attack gap ticks " << counter[1].tick - counter[0].tick << '\n';
+        check(counter[0].damage == 4, "slime deals 4 damage");
+        check(counter[1].tick - counter[0].tick >= 19 && counter[1].tick - counter[0].tick <= 21,
+              "slime attack period is 2 seconds");
+    }
+    check(a.position(slime).hp == slimeHp, "slime does not recover during combat");
+
+    const int lowestHp = counter.empty() ? 0 : counter.back().targetHp;
+    check(a.waitUntil(2s, [&] { return a.position(a.selfId()).hp > lowestHp; }), "player regenerates during combat");
+
+    // 슬라임에게서 가장 먼 모서리로 달려 생성 지점 500 밖으로 끌어낸다.
+    const float cornerX = start.x < 800.0f ? 1600.0f : 0.0f;
+    const float cornerY = start.y < 800.0f ? 1600.0f : 0.0f;
+    a.moveTo(cornerX, cornerY);
+    check(a.waitUntil(20s, [&] { return a.sees(slime) && a.position(slime).state == proto::ENTITY_STATE_RETURNING; }),
+          "slime returns beyond leash distance");
+    if (a.sees(slime))
+    {
+        const SeenPosition& seen = a.position(slime);
+        const float leash = distanceBetween(start.x, start.y, seen.x, seen.y);
+        std::cout << "[INFO] returning at distance from first seen " << leash << '\n';
+        check(leash >= 390.0f, "leash distance is about 500");
+    }
+
+    const std::size_t hitsBefore = a.hitsBy(a.selfId(), slime).size();
+    a.target(slime);
+    check(a.waitUntil(2s, [&] { return !a.rejects().empty(); })
+              && a.rejects().back() == proto::REJECT_REASON_TARGET_RETURNING, "returning target rejected");
+    stopWhereYouAre(a);
+    a.pump(500ms);
+    check(a.hitsBy(a.selfId(), slime).size() == hitsBefore, "returning slime takes no damage");
+
+    check(a.waitUntil(10s, [&] {
+              return a.sees(slime) && a.position(slime).state != proto::ENTITY_STATE_RETURNING
+                  && a.position(slime).hp == 120;
+          }), "slime recovers after return");
+}
+
+void testChaseTargetLeaves(std::uint16_t port)
+{
+    Client watcher(port);
+    enterAndWait(watcher);
+    std::uint32_t slime = 0;
+    {
+        Client a(port);
+        enterAndWait(a);
+        slime = waitForSlime(a);
+        watcher.waitUntil(3s, [&] { return watcher.sees(slime); });
+        a.target(slime);
+        check(a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), slime).empty(); }), "slime hit before leaving");
+    }
+    check(watcher.waitUntil(8s, [&] {
+              return watcher.sees(slime) && watcher.position(slime).state != proto::ENTITY_STATE_RETURNING
+                  && watcher.position(slime).hp == 120;
+          }), "slime recovers after attacker disconnects");
+}
+
+// 서버를 --debug-player-hp 6으로 띄워야 한다. 기본 HP로는 슬라임 한 마리에게 죽지 않는다.
+void testPlayerDeath(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+    const std::uint32_t slime = waitForSlime(a);
+
+    a.target(slime);
+    check(a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), slime).empty(); }), "hit a slime");
+    stopWhereYouAre(a);
+
+    check(a.waitUntil(30s, [&] { return !a.deaths().empty(); }), "player died");
+    check(b.waitUntil(3s, [&] { return !b.deaths().empty(); }), "other player sees death");
+    if (a.deaths().empty())
+    {
+        return;
+    }
+    const Death death = a.deaths().back();
+    std::cout << "[INFO] revive in ticks " << death.reviveTick - death.tick << '\n';
+    check(death.entity == a.selfId(), "death is for self");
+    check(death.reviveTick - death.tick >= 29 && death.reviveTick - death.tick <= 31, "revive tick is 3 seconds later");
+
+    check(a.waitUntil(1s, [&] { return a.position(a.selfId()).state == proto::ENTITY_STATE_DEAD; }), "state is dead");
+    check(a.position(a.selfId()).hp == 0, "hp is 0 while dead");
+
+    const SeenPosition dead = a.position(a.selfId());
+    const std::size_t rejectsBefore = a.rejects().size();
+    a.moveTo(100.0f, 100.0f);
+    a.target(slime);
+    a.pump(1s);
+    check(a.position(a.selfId()).x == dead.x && a.position(a.selfId()).y == dead.y, "move ignored while dead");
+    check(a.rejects().size() == rejectsBefore, "input while dead gets no reject");
+
+    check(a.waitUntil(5s, [&] { return a.position(a.selfId()).state != proto::ENTITY_STATE_DEAD; }), "player revived");
+    const SeenPosition revived = a.position(a.selfId());
+    std::cout << "[INFO] revived hp " << revived.hp << '\n';
+    check(revived.x == 800.0f && revived.y == 800.0f, "revive at enter position");
+    check(revived.hp == 6, "hp is full after revive");
+
+    check(a.waitUntil(10s, [&] { return !a.sees(slime) || a.position(slime).hp == 120; }), "slime gives up after death");
+
+    check(moveAndArrive(a, 820.0f, 800.0f), "input works after revive");
+}
+
 void testZoneFull(std::uint16_t port)
 {
     std::vector<std::unique_ptr<Client>> clients;
@@ -488,6 +839,14 @@ int main(int argc, char* argv[])
         WSADATA wsaData{};
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 
+        if (argc > 2 && std::string(argv[2]) == "death")
+        {
+            testPlayerDeath(port);
+            WSACleanup();
+            std::cout << (g_failures == 0 ? "ALL PASSED\n" : "FAILED: " + std::to_string(g_failures) + "\n");
+            return g_failures == 0 ? 0 : 1;
+        }
+
         testEnterAndSpawn(port);
         testMove(port);
         testTickRate(port);
@@ -496,6 +855,10 @@ int main(int argc, char* argv[])
         testDisconnect(port);
         testBadInput(port);
         testRequestLimit(port);
+        testSlimeSpawn(port);
+        testKillSlime(port);
+        testChaseAndReturn(port);
+        testChaseTargetLeaves(port);
         testZoneFull(port);
 
         WSACleanup();
