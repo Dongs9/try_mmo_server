@@ -11,7 +11,7 @@ option csharp_namespace = "TryMmo.Protocol";
 option optimize_for = LITE_RUNTIME;
 
 // 프레임 헤더의 메시지 ID. C2S는 클라이언트 → 서버, S2C는 서버 → 클라이언트.
-// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대, 전투 3000번대.
+// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대, 전투 3000번대, 성장 4000번대.
 enum MsgId {
   MSG_ID_UNSPECIFIED = 0;
 
@@ -30,6 +30,9 @@ enum MsgId {
   S2C_COMBAT_RESULT = 3001;
   S2C_PLAYER_DEATH = 3002;
   S2C_REQUEST_REJECTED = 3003;
+
+  // 성장
+  S2C_REWARD = 4000;
 }
 
 // 개체의 정적 정보와 등장 시점의 위치.
@@ -58,6 +61,7 @@ message EnterRes {
   EnterResult result = 1;
   EntityInfo self = 2;
   uint32 server_tick = 3;
+  PlayerStats stats = 4;
 }
 
 // ---------- 월드 ----------
@@ -92,6 +96,7 @@ message EntityPosition {
   EntityState state = 3;
   int32 hp = 4;
   int32 level = 5;
+  int32 max_hp = 6;  // 레벨업으로 바뀌므로 스냅샷에도 보낸다
 }
 
 // 틱마다 보내는 AOI 안 전체 스냅샷. 자기 자신을 포함한다.
@@ -134,4 +139,27 @@ enum RejectReason {
 message RequestRejected {
   MsgId request = 1;
   RejectReason reason = 2;
+}
+
+// ---------- 성장 ----------
+
+// 플레이어 본인의 성장 상태. 프로토타입은 저장하지 않으므로 입장 때 항상 초기값이다.
+message PlayerStats {
+  int32 level = 1;
+  int32 exp = 2;           // 현재 레벨에서 쌓은 EXP
+  int32 required_exp = 3;  // 다음 레벨까지 필요한 EXP. 최고 레벨이면 0
+  int32 gold = 4;
+  int32 max_hp = 5;
+  int32 attack = 6;
+  int32 defense = 7;
+}
+
+// 처치 보상. 기여자 본인에게만 보낸다. stats는 지급 후 값이다.
+// 슬라임의 CombatResult, EntityDespawn 뒤에 온다.
+message Reward {
+  uint32 slime_id = 1;
+  int32 exp_gained = 2;   // 최고 레벨이면 0
+  int32 gold_gained = 3;
+  int32 levels_gained = 4;
+  PlayerStats stats = 5;
 }
