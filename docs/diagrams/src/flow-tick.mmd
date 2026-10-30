@@ -13,7 +13,7 @@ flowchart TD
         aoi --> sync["sendPositions: 플레이어마다 스냅샷"]
     end
 
-    sync --> advance[다음 틱 시각에 100ms 더하기]
+    sync --> advance["다음 틱 시각에 100ms 더하기<br/>틱 통계 기록, 10초마다 로그"]
     advance --> behind{5틱 이상 밀림?}
     behind -- 예 --> skip[밀린 틱 버리기]
     behind -- 아니오 --> stopped

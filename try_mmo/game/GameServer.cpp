@@ -22,6 +22,39 @@ constexpr milliseconds kTickInterval{100};
 constexpr int kMaxCatchUpTicks = 5;
 constexpr std::chrono::seconds kRequestWindow{1};
 constexpr int kMaxRequestsPerWindow = 20;
+constexpr int kTickStatsPeriod = 100;  // 10초
+
+// 틱 간격과 처리 시간의 최대값을 모아 주기마다 로그로 남긴다.
+class TickStats
+{
+public:
+    void record(Clock::time_point start, Clock::duration cost)
+    {
+        if (lastStart_ != Clock::time_point{})
+        {
+            maxInterval_ = std::max(maxInterval_, start - lastStart_);
+        }
+        lastStart_ = start;
+        maxCost_ = std::max(maxCost_, cost);
+
+        if (++count_ < kTickStatsPeriod)
+        {
+            return;
+        }
+
+        logInfo("tick stats: maxIntervalUs=" + std::to_string(duration_cast<microseconds>(maxInterval_).count())
+                + " maxCostUs=" + std::to_string(duration_cast<microseconds>(maxCost_).count()));
+        count_ = 0;
+        maxInterval_ = {};
+        maxCost_ = {};
+    }
+
+private:
+    Clock::time_point lastStart_;
+    Clock::duration maxInterval_{};
+    Clock::duration maxCost_{};
+    int count_ = 0;
+};
 
 proto::Vec2 toMessage(Vec2 value)
 {
@@ -59,6 +92,7 @@ void GameServer::run(const std::atomic<bool>& stop)
 {
     // 단일 스레드 루프: 다음 틱까지 입출력을 처리하고, 시간이 되면 틱을 돌린다.
     auto nextTick = Clock::now() + kTickInterval;
+    TickStats stats;
     while (!stop.load(std::memory_order_relaxed))
     {
         const auto wait = ceil<milliseconds>(nextTick - Clock::now());
@@ -74,6 +108,7 @@ void GameServer::run(const std::atomic<bool>& stop)
         nextTick += kTickInterval;
 
         const auto tickCost = Clock::now() - now;
+        stats.record(now, tickCost);
         if (tickCost >= kTickInterval)
         {
             logWarn("tick " + std::to_string(zone_.currentTick()) + " took "
