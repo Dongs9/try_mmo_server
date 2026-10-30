@@ -83,6 +83,8 @@ message EntityPosition {
   uint32 entity_id = 1;
   Vec2 position = 2;
   EntityState state = 3;
+  int32 hp = 4;
+  int32 level = 5;
 }
 
 // 틱마다 보내는 AOI 안 전체 스냅샷. 자기 자신을 포함한다.
