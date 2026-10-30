@@ -33,6 +33,7 @@ struct SeenPosition
     proto::EntityState state = proto::ENTITY_STATE_UNSPECIFIED;
     int hp = 0;
     int level = 0;
+    int maxHp = 0;
 };
 
 struct Despawn
@@ -60,6 +61,18 @@ struct Hit
     std::uint32_t tick = 0;
     int sequence = 0;
     float distance = -1.0f;  // 직전 스냅샷 기준 두 개체의 거리
+};
+
+struct Reward
+{
+    std::uint32_t slime = 0;
+    int expGained = 0;
+    int goldGained = 0;
+    int levelsGained = 0;
+    proto::PlayerStats stats;
+    float x = 0.0f;
+    float y = 0.0f;
+    std::uint32_t tick = 0;
 };
 
 struct Death
@@ -195,6 +208,8 @@ public:
     }
     const std::vector<proto::RejectReason>& rejects() const { return rejects_; }
     const std::vector<Death>& deaths() const { return deaths_; }
+    const std::vector<Reward>& rewards() const { return rewards_; }
+    const proto::PlayerStats& enterStats() const { return enterStats_; }
     const SpawnRecord& spawnRecord(std::uint32_t entity) const { return spawnRecords_.at(entity); }
 
     // 위치를 아는 슬라임 중 가장 가까운 것. 없으면 0.
@@ -253,6 +268,7 @@ private:
             trymmo::decodePayload(payload, message);
             enterResult_ = message.result();
             selfId_ = message.self().entity_id();
+            enterStats_ = message.stats();
             break;
         }
         case proto::S2C_ENTITY_SPAWN:
@@ -281,7 +297,7 @@ private:
             for (const proto::EntityPosition& entity : message.entities())
             {
                 const SeenPosition seen{entity.position().x(), entity.position().y(), entity.state(),
-                                        entity.hp(), entity.level()};
+                                        entity.hp(), entity.level(), entity.max_hp()};
                 positions_[entity.entity_id()] = seen;
                 history_[entity.entity_id()].push_back(seen);
             }
@@ -300,6 +316,14 @@ private:
             }
             hits_.push_back({message.attacker_id(), message.target_id(), message.damage(), message.target_hp(),
                              lastTick_, ++sequence_, distance});
+            break;
+        }
+        case proto::S2C_REWARD:
+        {
+            proto::Reward message;
+            trymmo::decodePayload(payload, message);
+            rewards_.push_back({message.slime_id(), message.exp_gained(), message.gold_gained(), message.levels_gained(),
+                                message.stats(), message.slime_position().x(), message.slime_position().y(), lastTick_});
             break;
         }
         case proto::S2C_PLAYER_DEATH:
@@ -335,6 +359,8 @@ private:
     std::vector<Hit> hits_;
     std::vector<proto::RejectReason> rejects_;
     std::vector<Death> deaths_;
+    std::vector<Reward> rewards_;
+    proto::PlayerStats enterStats_;
     int sequence_ = 0;
 };
 
@@ -822,6 +848,266 @@ void testPlayerDeath(std::uint16_t port)
     check(moveAndArrive(a, 820.0f, 800.0f), "input works after revive");
 }
 
+// 가장 가까운 슬라임을 잡고 그 id를 돌려준다.
+std::uint32_t killNearestSlime(Client& client, std::uint32_t except = 0)
+{
+    const std::uint32_t slime = waitForSlime(client, except);
+    client.target(slime);
+    client.waitUntil(40s, [&] { return !client.despawnsOf(slime).empty(); });
+    return slime;
+}
+
+bool waitForRewards(Client& client, std::size_t count)
+{
+    return client.waitUntil(5s, [&] { return client.rewards().size() >= count; });
+}
+
+void testLevelUp(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    const proto::PlayerStats& start = a.enterStats();
+    check(start.level() == 1 && start.exp() == 0 && start.required_exp() == 20 && start.gold() == 0
+              && start.max_hp() == 100 && start.attack() == 48 && start.defense() == 20,
+          "enter response has start stats");
+
+    int gold = 0;
+    bool rewardsValid = true;
+    for (std::size_t kill = 1; kill <= 4; ++kill)
+    {
+        const std::uint32_t slime = killNearestSlime(a);
+        rewardsValid = rewardsValid && waitForRewards(a, kill);
+        if (a.rewards().size() >= kill)
+        {
+            const Reward& reward = a.rewards()[kill - 1];
+            gold += reward.goldGained;
+            rewardsValid = rewardsValid && reward.slime == slime && reward.expGained == 5 && reward.goldGained >= 6
+                        && reward.goldGained <= 10 && reward.stats.gold() == gold;
+        }
+    }
+    check(rewardsValid && a.rewards().size() == 4, "each kill gives 5 exp and 6 to 10 gold");
+    if (a.rewards().size() < 4)
+    {
+        return;
+    }
+
+    const Reward& beforeLevel = a.rewards()[2];
+    check(beforeLevel.stats.level() == 1 && beforeLevel.stats.exp() == 15 && beforeLevel.levelsGained == 0,
+          "15 exp stays at level 1");
+
+    const proto::PlayerStats& stats = a.rewards().back().stats;
+    std::cout << "[INFO] level " << stats.level() << " exp " << stats.exp() << "/" << stats.required_exp()
+              << " gold " << stats.gold() << '\n';
+    check(a.rewards().back().levelsGained == 1 && stats.level() == 2, "20 exp reaches level 2");
+    check(stats.exp() == 0 && stats.required_exp() == 25, "level 2 needs 25 exp");
+    check(stats.max_hp() == 103 && stats.attack() == 49 && stats.defense() == 21, "level up raises stats");
+
+    check(a.waitUntil(1s, [&] {
+              const SeenPosition& self = a.position(a.selfId());
+              return self.level == 2 && self.maxHp == 103;
+          }), "sync shows new level and max hp");
+    check(a.position(a.selfId()).hp == 103, "level up restores hp");
+}
+
+void testSharedKill(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+
+    bool bothRewarded = true;
+    bool goldDiffered = false;
+    for (std::size_t kill = 1; kill <= 5; ++kill)
+    {
+        const std::uint32_t slime = waitForSlime(a);
+        b.waitUntil(3s, [&] { return b.sees(slime); });
+        a.target(slime);
+        b.target(slime);
+        a.waitUntil(40s, [&] { return !a.despawnsOf(slime).empty(); });
+        bothRewarded = bothRewarded && waitForRewards(a, kill) && waitForRewards(b, kill);
+        if (a.rewards().size() >= kill && b.rewards().size() >= kill)
+        {
+            const Reward& first = a.rewards()[kill - 1];
+            const Reward& second = b.rewards()[kill - 1];
+            bothRewarded = bothRewarded && first.expGained == 5 && second.expGained == 5;
+            goldDiffered = goldDiffered || first.goldGained != second.goldGained;
+        }
+    }
+    check(bothRewarded, "all contributors get full exp");
+    check(goldDiffered, "gold is rolled per player");
+    check(a.rewards().size() == 5 && b.rewards().size() == 5, "one reward per kill");
+}
+
+void testContributionReset(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+    const std::uint32_t slime = waitForSlime(a);
+    const SeenPosition start = a.position(slime);
+    b.waitUntil(3s, [&] { return b.sees(slime); });
+
+    a.target(slime);
+    check(a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), slime).empty(); }), "a hit the slime");
+
+    const float cornerX = start.x < 800.0f ? 1600.0f : 0.0f;
+    const float cornerY = start.y < 800.0f ? 1600.0f : 0.0f;
+    a.moveTo(cornerX, cornerY);
+    check(a.waitUntil(20s, [&] {
+              return !a.sees(slime) || a.position(slime).state == proto::ENTITY_STATE_RETURNING;
+          }), "slime starts returning");
+    stopWhereYouAre(a);
+    check(b.waitUntil(15s, [&] {
+              return b.sees(slime) && b.position(slime).hp == 120
+                  && b.position(slime).state != proto::ENTITY_STATE_RETURNING;
+          }), "slime finished returning");
+
+    b.target(slime);
+    check(b.waitUntil(30s, [&] { return !b.despawnsOf(slime).empty(); }), "b killed the slime");
+    check(waitForRewards(b, 1), "b is rewarded");
+    a.pump(1s);
+    check(a.rewards().empty(), "contribution is cleared after return");
+}
+
+// 서버를 --debug-player-attack 10으로 띄워야 한다. 타격당 피해가 9~10이라 12 미만을 만들 수 있다.
+void testContributionThreshold(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+
+    const std::uint32_t slime = waitForSlime(a);
+    b.waitUntil(3s, [&] { return b.sees(slime); });
+    a.target(slime);
+    check(a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), slime).empty(); }), "a hit once");
+    stopWhereYouAre(a);
+    const int low = a.hitsBy(a.selfId(), slime).front().damage;
+    std::cout << "[INFO] low damage " << low << '\n';
+    check(low < 12, "damage is below contribution");
+
+    b.target(slime);
+    check(b.waitUntil(40s, [&] { return !b.despawnsOf(slime).empty(); }), "b killed the slime");
+    check(waitForRewards(b, 1), "main contributor is rewarded");
+    a.pump(1s);
+    check(a.rewards().empty(), "contribution below 12 gets no reward");
+
+    // 마지막 타격은 누적 피해가 12 미만이어도 보상을 받는다.
+    const std::uint32_t second = waitForSlime(a, slime);
+    b.waitUntil(3s, [&] { return b.sees(second); });
+    a.target(second);
+    const bool weakened = a.waitUntil(40s, [&] {
+        const auto hits = a.hitsBy(a.selfId(), second);
+        return !a.despawnsOf(second).empty() || (!hits.empty() && hits.back().targetHp <= 9);
+    });
+    stopWhereYouAre(a);
+    if (!weakened || !a.despawnsOf(second).empty())
+    {
+        std::cout << "[INFO] last hit case skipped, a killed the slime\n";
+        return;
+    }
+
+    const std::size_t rewardsBefore = b.rewards().size();
+    b.target(second);
+    check(b.waitUntil(10s, [&] { return !b.despawnsOf(second).empty(); }), "b finished the slime");
+    const auto lastHits = b.hitsBy(b.selfId(), second);
+    check(lastHits.size() == 1 && lastHits.front().damage < 12, "last hit damage is below contribution");
+    check(waitForRewards(b, rewardsBefore + 1), "last hit is rewarded");
+}
+
+// 서버를 --debug-kill-exp 50으로 띄워야 한다. 20 + 25를 넘겨 한 번에 Lv.3이 되고 5가 남는다.
+void testMultiLevel(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    killNearestSlime(a);
+    check(waitForRewards(a, 1), "reward received");
+    if (a.rewards().empty())
+    {
+        return;
+    }
+
+    const Reward& reward = a.rewards().front();
+    const proto::PlayerStats& stats = reward.stats;
+    std::cout << "[INFO] level " << stats.level() << " exp " << stats.exp() << "/" << stats.required_exp() << '\n';
+    check(reward.levelsGained == 2 && stats.level() == 3, "one kill gains 2 levels");
+    check(stats.exp() == 5, "excess exp carries over");
+    check(stats.required_exp() == 31, "level 3 needs 31 exp");
+    check(stats.max_hp() == 106 && stats.attack() == 50 && stats.defense() == 22, "stats rise per level");
+    check(a.waitUntil(1s, [&] { return a.position(a.selfId()).hp == 106; }), "hp is restored to new max");
+}
+
+// 서버를 --debug-kill-exp 1000000으로 띄워야 한다.
+void testLevelCap(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    killNearestSlime(a);
+    check(waitForRewards(a, 1), "first reward received");
+    if (a.rewards().empty())
+    {
+        return;
+    }
+
+    const proto::PlayerStats first = a.rewards().front().stats;
+    std::cout << "[INFO] level " << first.level() << " exp " << first.exp() << "/" << first.required_exp()
+              << " hp " << first.max_hp() << " atk " << first.attack() << " def " << first.defense() << '\n';
+    check(first.level() == 20, "level stops at 20");
+    check(first.exp() == 0 && first.required_exp() == 0, "max level has no exp");
+    check(first.max_hp() == 157 && first.attack() == 67 && first.defense() == 39, "stats at level 20");
+
+    const std::uint32_t second = killNearestSlime(a);
+    check(waitForRewards(a, 2), "second reward received");
+    if (a.rewards().size() < 2)
+    {
+        return;
+    }
+    const Reward& reward = a.rewards().back();
+    check(reward.slime == second, "second reward is for second slime");
+    check(reward.expGained == 0 && reward.stats.exp() == 0 && reward.stats.level() == 20, "exp ignored at max level");
+    check(reward.goldGained >= 6 && reward.goldGained <= 10, "gold still given at max level");
+    check(reward.stats.gold() == first.gold() + reward.goldGained, "gold accumulates at max level");
+}
+
+// 서버를 --debug-player-hp 16으로 띄워야 한다.
+void testDeadContributor(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+
+    // shared는 나중에 b가 끝낼 슬라임, killer는 a를 죽일 슬라임이다.
+    const std::uint32_t shared = waitForSlime(a);
+    const std::uint32_t killer = waitForSlime(a, shared);
+    b.waitUntil(3s, [&] { return b.sees(shared); });
+
+    a.target(shared);
+    check(a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), shared).empty(); }), "a hit the shared slime");
+    a.target(killer);
+    check(a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), killer).empty(); }), "a hit the second slime");
+    stopWhereYouAre(a);
+
+    // b가 때려서 추적 대상을 b로 바꿔야 a가 죽어도 shared가 복귀하지 않는다.
+    b.target(shared);
+    check(b.waitUntil(30s, [&] { return !b.hitsBy(b.selfId(), shared).empty(); }), "b hit the shared slime");
+    stopWhereYouAre(b);
+
+    check(a.waitUntil(40s, [&] { return !a.deaths().empty(); }), "a died");
+    b.target(shared);
+    check(b.waitUntil(3s, [&] { return !b.despawnsOf(shared).empty(); }), "b killed the shared slime");
+    check(waitForRewards(a, 1), "dead contributor is rewarded");
+    if (!a.rewards().empty())
+    {
+        const Death& death = a.deaths().back();
+        std::cout << "[INFO] reward tick " << a.rewards().front().tick << " revive tick " << death.reviveTick << '\n';
+        check(a.rewards().front().tick < death.reviveTick, "reward arrived while dead");
+        check(a.rewards().front().expGained == 5, "dead contributor gets full exp");
+    }
+}
+
 void testZoneFull(std::uint16_t port)
 {
     std::vector<std::unique_ptr<Client>> clients;
@@ -858,9 +1144,29 @@ int main(int argc, char* argv[])
         WSADATA wsaData{};
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-        if (argc > 2 && std::string(argv[2]) == "death")
+        if (argc > 2)
         {
-            testPlayerDeath(port);
+            const std::string mode = argv[2];
+            if (mode == "death")
+            {
+                testPlayerDeath(port);
+            }
+            else if (mode == "lowattack")
+            {
+                testContributionThreshold(port);
+            }
+            else if (mode == "multilevel")
+            {
+                testMultiLevel(port);
+            }
+            else if (mode == "levelcap")
+            {
+                testLevelCap(port);
+            }
+            else if (mode == "deadreward")
+            {
+                testDeadContributor(port);
+            }
             WSACleanup();
             std::cout << (g_failures == 0 ? "ALL PASSED\n" : "FAILED: " + std::to_string(g_failures) + "\n");
             return g_failures == 0 ? 0 : 1;
@@ -878,6 +1184,9 @@ int main(int argc, char* argv[])
         testKillSlime(port);
         testChaseAndReturn(port);
         testChaseTargetLeaves(port);
+        testLevelUp(port);
+        testSharedKill(port);
+        testContributionReset(port);
         testZoneFull(port);
 
         WSACleanup();
