@@ -5,11 +5,14 @@
     <VcpkgManifestRoot>$(MSBuildThisFileDirectory)</VcpkgManifestRoot>
     <VcpkgInstalledDir>$(MSBuildThisFileDirectory)vcpkg_installed\</VcpkgInstalledDir>
     <VcpkgTriplet>x64-windows-static-md</VcpkgTriplet>
+    <VcpkgAdditionalInstallOptions>--overlay-triplets=$(MSBuildThisFileDirectory)triplets</VcpkgAdditionalInstallOptions>
     <GeneratedProtoDir>$(MSBuildThisFileDirectory)x64\gen\</GeneratedProtoDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- _DISABLE_STL_ANNOTATION: vcpkg 라이브러리는 ASan 없이 빌드되어 컨테이너 주석을 맞출 수 없다. -->
+      <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;_DISABLE_STL_ANNOTATION;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ForcedIncludeFiles>$(MSBuildThisFileDirectory)try_mmo_proto\HideAsanFromProtobuf.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
   </ItemDefinitionGroup>
 </Project>

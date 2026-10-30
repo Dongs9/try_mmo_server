@@ -24,8 +24,10 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
-    <UseDebugLibraries>true</UseDebugLibraries>
+    <!-- Protobuf 생성 코드의 해시비트 검사는 NDEBUG가 없으면 켜지고 잘못된 주소를 읽는다. Debug도 릴리스 CRT와 NDEBUG를 쓰고 최적화만 끈다. -->
+    <UseDebugLibraries>false</UseDebugLibraries>
     <EnableASAN>true</EnableASAN>
+    <VcpkgConfiguration>Release</VcpkgConfiguration>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
     <UseDebugLibraries>false</UseDebugLibraries>
@@ -56,6 +58,8 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
   </ItemDefinitionGroup>
