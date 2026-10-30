@@ -130,7 +130,7 @@ private:
         int defense = 0;
         std::optional<Vec2> destination;
         std::optional<EntityId> target;
-        bool approaching = false;  // 대상의 사거리 밖이라 서버가 이동시키는 중
+        bool moved = false;  // 이번 틱에 위치가 바뀌었는지. 상태는 이 값으로 정한다
         std::uint32_t nextAttackTick = 0;
         std::uint32_t nextRegenTick = 0;
         std::optional<std::uint32_t> reviveTick;  // 값이 있으면 사망 중
@@ -155,7 +155,7 @@ private:
         std::optional<Vec2> destination;
         std::uint32_t nextWanderTick = 0;
         EntityId chaseTarget = 0;
-        bool approaching = false;
+        bool moved = false;
         std::uint32_t nextAttackTick = 0;
         std::uint32_t respawnTick = 0;
     };

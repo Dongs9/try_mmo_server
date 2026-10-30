@@ -98,7 +98,6 @@ MoveResult Zone::setDestination(EntityId id, Vec2 destination)
 
     player.destination = destination;
     player.target.reset();
-    player.approaching = false;
     return MoveResult::Accepted;
 }
 
@@ -263,7 +262,7 @@ EntityState Zone::stateOf(const Player& player)
     {
         return EntityState::Dead;
     }
-    return player.destination || player.approaching ? EntityState::Moving : EntityState::Idle;
+    return player.moved ? EntityState::Moving : EntityState::Idle;
 }
 
 EntityState Zone::stateOf(const Slime& slime)
@@ -272,6 +271,6 @@ EntityState Zone::stateOf(const Slime& slime)
     {
         return EntityState::Returning;
     }
-    return slime.destination || slime.approaching ? EntityState::Moving : EntityState::Idle;
+    return slime.moved ? EntityState::Moving : EntityState::Idle;
 }
 }

@@ -14,6 +14,11 @@ namespace
 // 사거리에 정확히 멈춘 뒤의 부동소수점 오차를 흡수한다.
 constexpr float kRangeTolerance = 0.01f;
 
+bool hasMoved(Vec2 before, Vec2 after)
+{
+    return before.x != after.x || before.y != after.y;
+}
+
 // 사거리 밖이면 사거리 경계까지만 다가간다. 다가간 뒤의 거리를 돌려준다.
 float approach(Vec2& position, Vec2 target, float step)
 {
@@ -31,6 +36,7 @@ void Zone::updatePlayers()
 {
     for (const auto& [id, player] : players_)
     {
+        player->moved = false;
         if (player->reviveTick)
         {
             if (tick_ >= *player->reviveTick)
@@ -45,9 +51,14 @@ void Zone::updatePlayers()
         {
             updatePlayerAttack(*player);
         }
-        else if (player->destination && moveToward(player->position, *player->destination, kPlayerStepPerTick))
+        else if (player->destination)
         {
-            player->destination.reset();
+            const Vec2 before = player->position;
+            if (moveToward(player->position, *player->destination, kPlayerStepPerTick))
+            {
+                player->destination.reset();
+            }
+            player->moved = hasMoved(before, player->position);
         }
     }
 }
@@ -64,10 +75,10 @@ void Zone::updatePlayerRegen(Player& player)
 void Zone::updatePlayerAttack(Player& player)
 {
     Slime& slime = *slimes_.at(*player.target);
+    const Vec2 before = player.position;
     const float distance = approach(player.position, slime.position, kPlayerStepPerTick);
-    const bool inRange = distance <= kAttackRange + kRangeTolerance;
-    player.approaching = !inRange;
-    if (!inRange || tick_ < player.nextAttackTick)
+    player.moved = hasMoved(before, player.position);
+    if (distance > kAttackRange + kRangeTolerance || tick_ < player.nextAttackTick)
     {
         return;
     }
@@ -103,7 +114,6 @@ void Zone::killPlayer(Player& player)
     player.reviveTick = reviveTick;
     player.target.reset();
     player.destination.reset();
-    player.approaching = false;
 
     for (const auto& [viewerId, viewer] : players_)
     {
@@ -118,6 +128,7 @@ void Zone::updateSlimes()
 {
     for (const auto& [id, slime] : slimes_)
     {
+        const Vec2 before = slime->position;
         switch (slime->mode)
         {
         case SlimeMode::Wander:
@@ -136,6 +147,7 @@ void Zone::updateSlimes()
             }
             break;
         }
+        slime->moved = slime->mode != SlimeMode::Dead && hasMoved(before, slime->position);
     }
 }
 
@@ -167,9 +179,7 @@ void Zone::updateChase(Slime& slime)
 
     Player& player = *found->second;
     const float distance = approach(slime.position, player.position, kSlimeChaseStepPerTick);
-    const bool inRange = distance <= kAttackRange + kRangeTolerance;
-    slime.approaching = !inRange;
-    if (!inRange || tick_ < slime.nextAttackTick)
+    if (distance > kAttackRange + kRangeTolerance || tick_ < slime.nextAttackTick)
     {
         return;
     }
@@ -207,7 +217,6 @@ void Zone::respawnSlime(Slime& slime)
 void Zone::startReturn(Slime& slime)
 {
     slime.mode = SlimeMode::Return;
-    slime.approaching = false;
     clearTargetsOn(slime.id);
 }
 
@@ -216,7 +225,6 @@ void Zone::killSlime(Slime& slime)
     slime.mode = SlimeMode::Dead;
     slime.respawnTick = tick_ + kSlimeRespawnTicks;
     slime.destination.reset();
-    slime.approaching = false;
     clearTargetsOn(slime.id);
 
     for (const auto& [viewerId, viewer] : players_)
@@ -242,7 +250,6 @@ void Zone::clearTargetsOn(EntityId slime)
         if (player->target == slime)
         {
             player->target.reset();
-            player->approaching = false;
         }
     }
 }

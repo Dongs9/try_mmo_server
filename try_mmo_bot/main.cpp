@@ -677,6 +677,16 @@ void testKillSlime(std::uint16_t port)
     a.pump(2500ms);
     check(a.hitsBy(a.selfId(), other).empty(), "move input clears target");
 
+    // 위치가 바뀐 스냅샷은 마지막 이동 틱까지 MOVING이어야 한다.
+    bool movingWhenMoved = true;
+    const auto& selfHistory = a.history(a.selfId());
+    for (std::size_t i = 1; i < selfHistory.size(); ++i)
+    {
+        const bool moved = selfHistory[i].x != selfHistory[i - 1].x || selfHistory[i].y != selfHistory[i - 1].y;
+        movingWhenMoved = movingWhenMoved && (!moved || selfHistory[i].state == proto::ENTITY_STATE_MOVING);
+    }
+    check(selfHistory.size() > 1 && movingWhenMoved, "state is moving on every tick that moved");
+
     const std::uint32_t deadTick = despawns.empty() ? 0 : despawns.back().tick;
     check(a.waitUntil(35s, [&] { return a.spawned(slime) && a.sees(slime); }), "slime respawned");
     if (a.sees(slime))
