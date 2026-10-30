@@ -162,4 +162,5 @@ message Reward {
   int32 gold_gained = 3;
   int32 levels_gained = 4;
   PlayerStats stats = 5;
+  Vec2 slime_position = 6;  // 처치 위치. 획득 표시용
 }

@@ -12,9 +12,9 @@
 
 서버와 클라이언트 모두 같은 `protoc`를 씁니다. 버전은 `libprotoc 36.2`입니다.
 
-```text
+``text
 vcpkg_installed\x64-windows-static-md\tools\protobuf\protoc.exe
-```
+``
 
 C++ 코드는 `try_mmo_proto` 프로젝트를 빌드하면 세 파일 모두 생성됩니다. 클라이언트 C# 코드는 `common.proto`와 `packet.proto`만 함께 생성합니다.
 
@@ -82,11 +82,12 @@ TCP 스트림 위에 프레임을 이어 보냅니다. 정수는 모두 리틀 �
 
 ## 성장
 
-슬라임이 죽으면 기여자마다 본인에게만 ``Reward``가 갑니다. 순서는 ``CombatResult``, ``EntityDespawn``, ``Reward``입니다.
+슬라임이 죽으면 기여자마다 본인에게만 `Reward`가 갑니다. 순서는 `CombatResult`, `EntityDespawn`, `Reward`입니다.
 
 - 기여 인정은 누적 피해 12 이상 또는 마지막 타격입니다. 기여자 전원이 5 EXP를 받고, 골드 6~10은 사람마다 따로 뽑습니다.
 - 처치 시점에 접속 중이면 사망 중이어도 받습니다. 슬라임이 복귀를 끝내면 기여 기록이 지워집니다.
-- ``EnterRes.stats``로 시작 능력치를 받고, 이후에는 ``Reward.stats``로 갱신합니다.
-- 다른 플레이어의 레벨, HP, 최대 HP는 ``PositionSync``로 받습니다.
-- 최고 레벨 20에서는 ``exp``와 ``required_exp``가 0이고 ``exp_gained``도 0입니다. 골드는 계속 받습니다. Lv.20에 도달할 때 남은 EXP는 버립니다.
+- `Reward.slime_position`이 처치 위치입니다. 슬라임은 이미 사라진 뒤이므로 획득 표시에 이 값을 씁니다.
+- `EnterRes.stats`로 시작 능력치를 받고, 이후에는 `Reward.stats`로 갱신합니다.
+- 다른 플레이어의 레벨, HP, 최대 HP는 `PositionSync`로 받습니다.
+- 최고 레벨 20에서는 `exp`와 `required_exp`가 0이고 `exp_gained`도 0입니다. 골드는 계속 받습니다. Lv.20에 도달할 때 남은 EXP는 버립니다.
 - 사망 중 레벨이 올라도 HP는 0을 유지하고, 부활할 때 새 최대 HP로 회복합니다.
