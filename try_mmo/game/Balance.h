@@ -15,12 +15,19 @@ inline constexpr float kAoiLeaveDistance = 800.0f;
 
 inline constexpr int kPlayerMaxHp = 100;
 inline constexpr int kPlayerStartLevel = 1;
+inline constexpr int kPlayerMaxLevel = 20;
 inline constexpr int kPlayerAttack = 48;
 inline constexpr int kPlayerDefense = 20;
 inline constexpr float kPlayerStepPerTick = 10.0f;  // 초당 100
 inline constexpr int kPlayerAttackPeriodTicks = 10;
 inline constexpr int kPlayerRegenPeriodTicks = 10;
 inline constexpr int kPlayerReviveTicks = 30;
+
+inline constexpr double kRequiredExpBase = 20.0;
+inline constexpr double kRequiredExpGrowth = 1.25;
+inline constexpr int kLevelUpMaxHp = 3;
+inline constexpr int kLevelUpAttack = 1;
+inline constexpr int kLevelUpDefense = 1;
 
 inline constexpr float kAttackRange = 60.0f;
 inline constexpr float kBasicAttackCoefficient = 1.0f;
@@ -43,4 +50,8 @@ inline constexpr int kSlimeWanderMinTicks = 30;
 inline constexpr int kSlimeWanderMaxTicks = 60;
 inline constexpr int kSlimeAttackPeriodTicks = 20;
 inline constexpr int kSlimeRespawnTicks = 300;
+inline constexpr int kSlimeKillExp = 5;
+inline constexpr int kSlimeGoldMin = 6;
+inline constexpr int kSlimeGoldMax = 10;
+inline constexpr int kContributionDamage = 12;  // 최대 HP의 10%
 }

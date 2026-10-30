@@ -38,6 +38,7 @@ private:
     void onPositionSync(EntityId viewer, std::uint32_t tick, const std::vector<EntitySnapshot>& entities) override;
     void onCombat(EntityId viewer, const CombatEvent& event) override;
     void onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick) override;
+    void onReward(EntityId player, const RewardEvent& event) override;
 
     bool allowRequest(ConnectionId connection, Session& session);
     void handleEnter(ConnectionId connection, Session& session);

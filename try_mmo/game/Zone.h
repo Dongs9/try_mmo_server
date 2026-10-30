@@ -73,6 +73,7 @@ struct EntitySnapshot
     EntityState state = EntityState::Idle;
     int hp = 0;
     int level = 0;
+    int maxHp = 0;
 };
 
 struct CombatEvent
@@ -81,6 +82,27 @@ struct CombatEvent
     EntityId target = 0;
     int damage = 0;
     int targetHp = 0;
+};
+
+struct PlayerProgress
+{
+    int level = 0;
+    int exp = 0;
+    int requiredExp = 0;  // 최고 레벨이면 0
+    int gold = 0;
+    int maxHp = 0;
+    int attack = 0;
+    int defense = 0;
+};
+
+struct RewardEvent
+{
+    EntityId slime = 0;
+    Vec2 slimePosition;
+    int expGained = 0;
+    int goldGained = 0;
+    int levelsGained = 0;
+    PlayerProgress progress;
 };
 
 // 존에서 일어난 일을 바깥으로 알린다. 존은 네트워크와 Protobuf를 모른다.
@@ -94,11 +116,15 @@ public:
     virtual void onPositionSync(EntityId viewer, std::uint32_t tick, const std::vector<EntitySnapshot>& entities) = 0;
     virtual void onCombat(EntityId viewer, const CombatEvent& event) = 0;
     virtual void onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick) = 0;
+    virtual void onReward(EntityId player, const RewardEvent& event) = 0;
 };
 
 struct ZoneOptions
 {
-    int playerMaxHp;  // 사망 시험용으로 낮출 수 있다
+    // 기본값은 기획서 수치다. 시험에서 재현하기 어려운 조건을 만들 때만 바꾼다.
+    int playerMaxHp;
+    int playerAttack;
+    int slimeKillExp;
 };
 
 // 맵 하나의 세계 상태. 틱마다 플레이어, 슬라임, AOI, 스냅샷 순서로 진행한다.
@@ -115,6 +141,7 @@ public:
     TargetResult setTarget(EntityId id, EntityId target);
     void tick();
 
+    PlayerProgress progressOf(EntityId id) const;
     std::uint32_t currentTick() const { return tick_; }
 
 private:
@@ -128,6 +155,8 @@ private:
         int level = 0;
         int attack = 0;
         int defense = 0;
+        int exp = 0;
+        int gold = 0;
         std::optional<Vec2> destination;
         std::optional<EntityId> target;
         bool moved = false;  // 이번 틱에 위치가 바뀌었는지. 상태는 이 값으로 정한다
@@ -158,6 +187,7 @@ private:
         bool moved = false;
         std::uint32_t nextAttackTick = 0;
         std::uint32_t respawnTick = 0;
+        std::unordered_map<EntityId, int> contributions;  // 플레이어별 누적 피해
     };
 
     // Zone.cpp: 세계 상태와 AOI
@@ -190,7 +220,12 @@ private:
     void updateReturn(Slime& slime);
     void respawnSlime(Slime& slime);
     void startReturn(Slime& slime);
-    void killSlime(Slime& slime);
+    void killSlime(Slime& slime, EntityId killer);
+
+    // ZoneCombat.cpp: 보상과 성장
+    void grantRewards(Slime& slime, EntityId killer);
+    int gainExp(Player& player, int exp);
+    void levelUp(Player& player);
 
     // ZoneCombat.cpp: 공통
     int rollDamage(int attack, float coefficient, int defense);

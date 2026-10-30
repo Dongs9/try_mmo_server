@@ -9,6 +9,7 @@ classDiagram
         +removePlayer(id)
         +setDestination(id, destination)
         +setTarget(id, target)
+        +progressOf(id)
         +tick()
         -updatePlayers()
         -updateSlimes()
@@ -24,6 +25,8 @@ classDiagram
         +maxHp
         +attack
         +defense
+        +exp
+        +gold
         +destination
         +target
         +nextAttackTick
@@ -41,6 +44,7 @@ classDiagram
         +chaseTarget
         +nextAttackTick
         +respawnTick
+        +contributions
     }
     class EntityView {
         +id

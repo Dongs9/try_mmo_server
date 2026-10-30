@@ -39,7 +39,8 @@ struct Options
 {
     std::uint16_t port = kDefaultPort;
     int lagRttMs = 0;
-    int playerMaxHp = trymmo::balance::kPlayerMaxHp;
+    trymmo::ZoneOptions zone{trymmo::balance::kPlayerMaxHp, trymmo::balance::kPlayerAttack,
+                             trymmo::balance::kSlimeKillExp};
 };
 
 Options parseOptions(int argc, char* argv[])
@@ -58,7 +59,15 @@ Options parseOptions(int argc, char* argv[])
         }
         else if (name == "--debug-player-hp")
         {
-            options.playerMaxHp = std::stoi(argv[i + 1]);
+            options.zone.playerMaxHp = std::stoi(argv[i + 1]);
+        }
+        else if (name == "--debug-player-attack")
+        {
+            options.zone.playerAttack = std::stoi(argv[i + 1]);
+        }
+        else if (name == "--debug-kill-exp")
+        {
+            options.zone.slimeKillExp = std::stoi(argv[i + 1]);
         }
     }
     return options;
@@ -84,7 +93,7 @@ int main(int argc, char* argv[])
             trymmo::logInfo("artificial lag enabled, rtt " + std::to_string(options.lagRttMs) + "ms");
         }
 
-        trymmo::GameServer server(*transport, {options.playerMaxHp});
+        trymmo::GameServer server(*transport, options.zone);
         trymmo::logInfo("listening on port " + std::to_string(options.port));
         server.run(g_stop);
         trymmo::logInfo("stopped");

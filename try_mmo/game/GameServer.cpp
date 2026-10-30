@@ -79,6 +79,19 @@ proto::EntityState toMessage(EntityState state)
     }
 }
 
+proto::PlayerStats toMessage(const PlayerProgress& progress)
+{
+    proto::PlayerStats stats;
+    stats.set_level(progress.level);
+    stats.set_exp(progress.exp);
+    stats.set_required_exp(progress.requiredExp);
+    stats.set_gold(progress.gold);
+    stats.set_max_hp(progress.maxHp);
+    stats.set_attack(progress.attack);
+    stats.set_defense(progress.defense);
+    return stats;
+}
+
 proto::DespawnReason toMessage(DespawnReason reason)
 {
     switch (reason)
@@ -228,6 +241,7 @@ void GameServer::onPositionSync(EntityId viewer, std::uint32_t tick, const std::
         position->set_state(toMessage(entity.state));
         position->set_hp(entity.hp);
         position->set_level(entity.level);
+        position->set_max_hp(entity.maxHp);
     }
     transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_POSITION_SYNC, message));
 }
@@ -271,6 +285,7 @@ void GameServer::handleEnter(ConnectionId connection, Session& session)
         playerConnections_.emplace(player->id, connection);
         response.set_result(proto::ENTER_RESULT_OK);
         *response.mutable_self() = toMessage(*player);
+        *response.mutable_stats() = toMessage(zone_.progressOf(player->id));
         logInfo("connection " + std::to_string(connection) + " entered as " + player->name);
     }
     else
@@ -362,6 +377,18 @@ void GameServer::onCombat(EntityId viewer, const CombatEvent& event)
     message.set_damage(event.damage);
     message.set_target_hp(event.targetHp);
     transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_COMBAT_RESULT, message));
+}
+
+void GameServer::onReward(EntityId player, const RewardEvent& event)
+{
+    proto::Reward message;
+    message.set_slime_id(event.slime);
+    message.set_exp_gained(event.expGained);
+    message.set_gold_gained(event.goldGained);
+    message.set_levels_gained(event.levelsGained);
+    *message.mutable_stats() = toMessage(event.progress);
+    *message.mutable_slime_position() = toMessage(event.slimePosition);
+    transport_.send(playerConnections_.at(player), encodeFrame(proto::S2C_REWARD, message));
 }
 
 void GameServer::onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick)

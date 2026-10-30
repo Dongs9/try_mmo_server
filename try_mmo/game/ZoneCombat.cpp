@@ -14,6 +14,16 @@ namespace
 // 사거리에 정확히 멈춘 뒤의 부동소수점 오차를 흡수한다.
 constexpr float kRangeTolerance = 0.01f;
 
+// 최고 레벨이면 0.
+int requiredExpFor(int level)
+{
+    if (level >= kPlayerMaxLevel)
+    {
+        return 0;
+    }
+    return static_cast<int>(std::lround(kRequiredExpBase * std::pow(kRequiredExpGrowth, level - 1)));
+}
+
 bool hasMoved(Vec2 before, Vec2 after)
 {
     return before.x != after.x || before.y != after.y;
@@ -85,12 +95,13 @@ void Zone::updatePlayerAttack(Player& player)
 
     player.nextAttackTick = tick_ + kPlayerAttackPeriodTicks;
     const int damage = rollDamage(player.attack, kBasicAttackCoefficient, kSlimeDefense);
+    slime.contributions[player.id] += std::min(damage, slime.hp);
     slime.hp = std::max(slime.hp - damage, 0);
     broadcastCombat({player.id, slime.id, damage, slime.hp});
 
     if (slime.hp == 0)
     {
-        killSlime(slime);
+        killSlime(slime, player.id);
         return;
     }
 
@@ -201,6 +212,7 @@ void Zone::updateReturn(Slime& slime)
     {
         slime.mode = SlimeMode::Wander;
         slime.hp = kSlimeMaxHp;
+        slime.contributions.clear();
         slime.nextWanderTick = tick_ + randomWanderDelay();
     }
 }
@@ -220,7 +232,7 @@ void Zone::startReturn(Slime& slime)
     clearTargetsOn(slime.id);
 }
 
-void Zone::killSlime(Slime& slime)
+void Zone::killSlime(Slime& slime, EntityId killer)
 {
     slime.mode = SlimeMode::Dead;
     slime.respawnTick = tick_ + kSlimeRespawnTicks;
@@ -234,6 +246,74 @@ void Zone::killSlime(Slime& slime)
             observer_.onEntityDespawn(viewerId, slime.id, DespawnReason::Died);
         }
     }
+
+    grantRewards(slime, killer);
+}
+
+void Zone::grantRewards(Slime& slime, EntityId killer)
+{
+    std::uniform_int_distribution<int> gold(kSlimeGoldMin, kSlimeGoldMax);
+    for (const auto& [playerId, damage] : slime.contributions)
+    {
+        // 이미 나간 플레이어는 받지 못한다. 사망 중인 플레이어는 받는다.
+        const auto found = players_.find(playerId);
+        if (found == players_.end() || (damage < kContributionDamage && playerId != killer))
+        {
+            continue;
+        }
+
+        Player& player = *found->second;
+        RewardEvent reward;
+        reward.slime = slime.id;
+        reward.slimePosition = slime.position;
+        reward.goldGained = gold(random_);
+        player.gold += reward.goldGained;
+        if (player.level < kPlayerMaxLevel)
+        {
+            reward.expGained = options_.slimeKillExp;
+            reward.levelsGained = gainExp(player, reward.expGained);
+        }
+        reward.progress = progressOf(playerId);
+        observer_.onReward(playerId, reward);
+    }
+    slime.contributions.clear();
+}
+
+int Zone::gainExp(Player& player, int exp)
+{
+    int levels = 0;
+    player.exp += exp;
+    while (player.level < kPlayerMaxLevel && player.exp >= requiredExpFor(player.level))
+    {
+        player.exp -= requiredExpFor(player.level);
+        levelUp(player);
+        ++levels;
+    }
+    if (player.level == kPlayerMaxLevel)
+    {
+        player.exp = 0;
+    }
+    return levels;
+}
+
+void Zone::levelUp(Player& player)
+{
+    ++player.level;
+    player.maxHp += kLevelUpMaxHp;
+    player.attack += kLevelUpAttack;
+    player.defense += kLevelUpDefense;
+    // 사망 중이면 HP는 0으로 두고 부활할 때 회복한다.
+    if (!player.reviveTick)
+    {
+        player.hp = player.maxHp;
+    }
+}
+
+PlayerProgress Zone::progressOf(EntityId id) const
+{
+    const Player& player = *players_.at(id);
+    return {player.level, player.exp, requiredExpFor(player.level), player.gold,
+            player.maxHp, player.attack, player.defense};
 }
 
 int Zone::rollDamage(int attack, float coefficient, int defense)

@@ -14,8 +14,8 @@ flowchart TD
     range -- 예 --> ready{"공격 주기(1초) 지남?"}
     ready -- 아니오 --> finish
     ready -- 예 --> hit["피해 계산, CombatResult 전송"]
-    hit --> alive{슬라임 HP 0?}
+    hit --> alive{"기여 피해 누적, 슬라임 HP 0?"}
     alive -- 아니오 --> chase["슬라임이 공격자를 추적"]
-    alive -- 예 --> kill["대상 해제, EntityDespawn DIED,<br/>30초 후 리스폰 예약"]
+    alive -- 예 --> kill["대상 해제, EntityDespawn DIED,<br/>기여자 보상 지급, 30초 후 리스폰 예약"]
     chase --> finish
     kill --> finish

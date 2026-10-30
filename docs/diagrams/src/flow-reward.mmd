@@ -1,0 +1,17 @@
+flowchart TD
+    kill["슬라임 HP 0: CombatResult, EntityDespawn DIED"] --> each[기여 기록의 플레이어마다]
+    each --> online{접속 중?}
+    online -- 아니오 --> skip[건너뜀]
+    online -- "예, 사망 중 포함" --> enough{"누적 피해 12 이상<br/>또는 마지막 타격?"}
+    enough -- 아니오 --> skip
+    enough -- 예 --> gold["골드 6~10 추첨, 합산"]
+    gold --> max{Lv.20?}
+    max -- 예 --> send["Reward를 본인에게 전송"]
+    max -- 아니오 --> exp["EXP 합산"]
+    exp --> level{"필요 EXP 이상이고 Lv.20 미만?"}
+    level -- 아니오 --> send
+    level -- 예 --> up["필요 EXP 차감, 레벨업<br/>최대 HP +3, 공격력 +1, 방어력 +1<br/>생존 중이면 HP 전부 회복"]
+    up --> level
+    send --> next[다음 기여자]
+    skip --> next
+    next --> clear["모두 끝나면 기여 기록 삭제"]

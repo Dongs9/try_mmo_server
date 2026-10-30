@@ -4,7 +4,7 @@ stateDiagram-v2
     Wander --> Chase : 피격
     Chase --> Return : 생성 지점 500 초과, 대상 사망, 연결 끊김
     Chase --> Dead : HP 0
-    Return --> Wander : 도착, HP 전부 회복
+    Return --> Wander : 도착, HP 회복, 기여 초기화
     Dead --> Wander : 30초 후 리스폰
 
     Wander : 배회, 속도 40

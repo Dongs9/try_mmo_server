@@ -61,7 +61,7 @@ std::optional<EntityView> Zone::addPlayer()
     player->hp = options_.playerMaxHp;
     player->maxHp = options_.playerMaxHp;
     player->level = kPlayerStartLevel;
-    player->attack = kPlayerAttack;
+    player->attack = options_.playerAttack;
     player->defense = kPlayerDefense;
     player->nextRegenTick = tick_ + kPlayerRegenPeriodTicks;
 
@@ -248,12 +248,12 @@ EntityView Zone::makeView(const Slime& slime)
 
 EntitySnapshot Zone::makeSnapshot(const Player& player)
 {
-    return {player.id, player.position, stateOf(player), player.hp, player.level};
+    return {player.id, player.position, stateOf(player), player.hp, player.level, player.maxHp};
 }
 
 EntitySnapshot Zone::makeSnapshot(const Slime& slime)
 {
-    return {slime.id, slime.position, stateOf(slime), slime.hp, kSlimeLevel};
+    return {slime.id, slime.position, stateOf(slime), slime.hp, kSlimeLevel, kSlimeMaxHp};
 }
 
 EntityState Zone::stateOf(const Player& player)
