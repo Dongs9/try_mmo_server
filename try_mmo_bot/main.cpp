@@ -959,6 +959,11 @@ void testContributionReset(std::uint16_t port)
               return !a.sees(slime) || a.position(slime).state == proto::ENTITY_STATE_RETURNING;
           }), "slime starts returning");
     stopWhereYouAre(a);
+
+    // b의 수신 버퍼에는 피격 전 스냅샷이 남아 있다. 복귀를 본 뒤에야 HP 120을 믿을 수 있다.
+    check(b.waitUntil(15s, [&] {
+              return !b.sees(slime) || b.position(slime).state == proto::ENTITY_STATE_RETURNING;
+          }), "b sees slime leave or return");
     check(b.waitUntil(15s, [&] {
               return b.sees(slime) && b.position(slime).hp == 120
                   && b.position(slime).state != proto::ENTITY_STATE_RETURNING;
