@@ -15,10 +15,13 @@ message Vec2 {
 enum EntityType {
   ENTITY_TYPE_UNSPECIFIED = 0;
   ENTITY_TYPE_PLAYER = 1;
+  ENTITY_TYPE_SLIME = 2;
 }
 
 enum EntityState {
   ENTITY_STATE_UNSPECIFIED = 0;
   ENTITY_STATE_IDLE = 1;
   ENTITY_STATE_MOVING = 2;
+  ENTITY_STATE_RETURNING = 3;  // 슬라임 복귀 중. 대상 지정, 피격 불가
+  ENTITY_STATE_DEAD = 4;
 }

@@ -11,7 +11,7 @@ option csharp_namespace = "TryMmo.Protocol";
 option optimize_for = LITE_RUNTIME;
 
 // 프레임 헤더의 메시지 ID. C2S는 클라이언트 → 서버, S2C는 서버 → 클라이언트.
-// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대.
+// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대, 전투 3000번대.
 enum MsgId {
   MSG_ID_UNSPECIFIED = 0;
 
@@ -24,6 +24,12 @@ enum MsgId {
   S2C_ENTITY_SPAWN = 2001;
   S2C_ENTITY_DESPAWN = 2002;
   S2C_POSITION_SYNC = 2003;
+
+  // 전투
+  C2S_TARGET_REQ = 3000;
+  S2C_COMBAT_RESULT = 3001;
+  S2C_PLAYER_DEATH = 3002;
+  S2C_REQUEST_REJECTED = 3003;
 }
 
 // 개체의 정적 정보와 등장 시점의 위치.
@@ -60,6 +66,7 @@ enum DespawnReason {
   DESPAWN_REASON_UNSPECIFIED = 0;
   DESPAWN_REASON_LEFT = 1;        // 연결 끊김
   DESPAWN_REASON_OUT_OF_AOI = 2;  // 이탈 거리 800 초과
+  DESPAWN_REASON_DIED = 3;        // 슬라임 사망. 리스폰하면 EntitySpawn이 다시 온다
 }
 
 // 이동 요청. 새 요청은 이전 목적지를 덮어쓴다.
@@ -91,4 +98,40 @@ message EntityPosition {
 message PositionSync {
   uint32 server_tick = 1;
   repeated EntityPosition entities = 2;
+}
+
+// ---------- 전투 ----------
+
+// 대상 지정. 접근과 타격은 서버가 처리한다.
+// 이동 요청, 대상 사망, 대상 복귀 시작, 플레이어 사망으로 대상이 해제된다.
+message TargetReq {
+  uint32 target_id = 1;
+}
+
+// 타격 한 번의 결과. 공격자나 대상이 AOI 안에 있는 플레이어가 받는다.
+// 대상이 슬라임이고 target_hp가 0이면 이어서 EntityDespawn(DIED)이 온다.
+message CombatResult {
+  uint32 attacker_id = 1;
+  uint32 target_id = 2;
+  int32 damage = 3;
+  int32 target_hp = 4;
+}
+
+// 플레이어 사망. revive_tick에 입장 위치에서 부활한다.
+message PlayerDeath {
+  uint32 entity_id = 1;
+  uint32 revive_tick = 2;
+}
+
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  REJECT_REASON_TARGET_NOT_FOUND = 1;
+  REJECT_REASON_TARGET_DEAD = 2;
+  REJECT_REASON_TARGET_RETURNING = 3;
+}
+
+// 요청 거부. 사망 중 입력과 맵 밖 이동은 이 메시지 없이 무시된다.
+message RequestRejected {
+  MsgId request = 1;
+  RejectReason reason = 2;
 }

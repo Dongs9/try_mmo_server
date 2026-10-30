@@ -28,8 +28,12 @@ C++ 코드는 `try_mmo_proto` 프로젝트를 빌드하면 세 파일 모두 생
 | 월드 | `S2C_ENTITY_SPAWN` | 2001 |
 | 월드 | `S2C_ENTITY_DESPAWN` | 2002 |
 | 월드 | `S2C_POSITION_SYNC` | 2003 |
+| 전투 | `C2S_TARGET_REQ` | 3000 |
+| 전투 | `S2C_COMBAT_RESULT` | 3001 |
+| 전투 | `S2C_PLAYER_DEATH` | 3002 |
+| 전투 | `S2C_REQUEST_REJECTED` | 3003 |
 
-입장은 1000번대, 월드는 2000번대를 씁니다.
+입장은 1000번대, 월드는 2000번대, 전투는 3000번대를 씁니다.
 
 ## 프레임
 
@@ -65,3 +69,11 @@ TCP 스트림 위에 프레임을 이어 보냅니다. 정수는 모두 리틀 �
 ## AOI
 
 플레이어 기준 중심 거리로 판정합니다. 거리 700 이하면 등장, 800을 넘으면 퇴장입니다.
+
+## 전투
+ `TargetReq`로 대상만 지정하고, 접근과 타격은 서버가 처리합니다. `CombatResult`는 공격자나 대상이 AOI 안에 있는 플레이어가 받습니다.
+
+- 슬라임이 죽으면 `CombatResult`(`target_hp` 0) 다음에 `EntityDespawn`(`DIED`)이 옵니다.
+- 리스폰한 슬라임은 AOI 안 플레이어에게 `EntitySpawn`으로 옵니다.
+- 플레이어가 죽으면 AOI 안 플레이어와 본인이 `PlayerDeath`를 받습니다. 사망 중 `state`는 `DEAD`이고, `revive_tick`에 (800, 800)에서 부활합니다. 부활은 `PositionSync`의 상태와 위치로 드러납니다.
+- 대상 해제 전용 메시지는 없습니다. 이동 요청, `EntityDespawn`, 대상의 `RETURNING` 상태, 본인 사망으로 클라이언트가 판단합니다.
