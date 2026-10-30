@@ -820,6 +820,15 @@ void testZoneFull(std::uint16_t port)
     {
         clients.push_back(std::make_unique<Client>(port));
         allEntered = enterAndWait(*clients.back()) && clients.back()->enterResult() == proto::ENTER_RESULT_OK && allEntered;
+
+        // 읽지 않는 클라이언트는 서버가 outbox 한도로 끊으므로 입장 중에도 수신을 비운다.
+        if (i % 5 == 0)
+        {
+            for (const auto& client : clients)
+            {
+                client->pump(2ms);
+            }
+        }
     }
     check(allEntered, "100 clients entered");
 
