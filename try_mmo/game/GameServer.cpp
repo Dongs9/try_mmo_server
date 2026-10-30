@@ -66,7 +66,30 @@ proto::Vec2 toMessage(Vec2 value)
 
 proto::EntityState toMessage(EntityState state)
 {
-    return state == EntityState::Moving ? proto::ENTITY_STATE_MOVING : proto::ENTITY_STATE_IDLE;
+    switch (state)
+    {
+    case EntityState::Moving:
+        return proto::ENTITY_STATE_MOVING;
+    case EntityState::Returning:
+        return proto::ENTITY_STATE_RETURNING;
+    case EntityState::Dead:
+        return proto::ENTITY_STATE_DEAD;
+    default:
+        return proto::ENTITY_STATE_IDLE;
+    }
+}
+
+proto::DespawnReason toMessage(DespawnReason reason)
+{
+    switch (reason)
+    {
+    case DespawnReason::Left:
+        return proto::DESPAWN_REASON_LEFT;
+    case DespawnReason::Died:
+        return proto::DESPAWN_REASON_DIED;
+    default:
+        return proto::DESPAWN_REASON_OUT_OF_AOI;
+    }
 }
 
 proto::EntityInfo toMessage(const EntityView& entity)
@@ -82,8 +105,8 @@ proto::EntityInfo toMessage(const EntityView& entity)
 }
 }
 
-GameServer::GameServer(ITransport& transport)
-    : transport_(transport), zone_(*this)
+GameServer::GameServer(ITransport& transport, ZoneOptions zoneOptions)
+    : transport_(transport), zone_(*this, zoneOptions)
 {
     transport_.setHandler(this);
 }
@@ -169,6 +192,9 @@ void GameServer::onFrame(ConnectionId connection, std::span<const std::byte> fra
     case proto::C2S_MOVE_REQ:
         handleMove(connection, found->second, payload);
         break;
+    case proto::C2S_TARGET_REQ:
+        handleTarget(connection, found->second, payload);
+        break;
     default:
         logWarn("connection " + std::to_string(connection) + " sent unknown message " + std::to_string(msgId));
         break;
@@ -186,8 +212,7 @@ void GameServer::onEntityDespawn(EntityId viewer, EntityId entity, DespawnReason
 {
     proto::EntityDespawn message;
     message.set_entity_id(entity);
-    message.set_reason(reason == DespawnReason::Left ? proto::DESPAWN_REASON_LEFT
-                                                     : proto::DESPAWN_REASON_OUT_OF_AOI);
+    message.set_reason(toMessage(reason));
     transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_ENTITY_DESPAWN, message));
 }
 
@@ -273,10 +298,77 @@ void GameServer::handleMove(ConnectionId connection, Session& session, std::span
     }
 
     const Vec2 destination{request.destination().x(), request.destination().y()};
-    if (!zone_.setDestination(*session.player, destination))
+    switch (zone_.setDestination(*session.player, destination))
     {
+    case MoveResult::OutOfMap:
         logWarn("player " + std::to_string(*session.player) + " move out of map ignored: ("
                 + std::to_string(destination.x) + ", " + std::to_string(destination.y) + ")");
+        break;
+    case MoveResult::PlayerDead:
+        logWarn("player " + std::to_string(*session.player) + " move ignored while dead");
+        break;
+    case MoveResult::Accepted:
+        break;
     }
+}
+
+void GameServer::handleTarget(ConnectionId connection, Session& session, std::span<const std::byte> payload)
+{
+    proto::TargetReq request;
+    if (!decodePayload(payload, request))
+    {
+        logWarn("connection " + std::to_string(connection) + " sent malformed target, closing");
+        transport_.close(connection);
+        return;
+    }
+
+    if (!session.player)
+    {
+        logWarn("connection " + std::to_string(connection) + " sent target before enter");
+        return;
+    }
+
+    const auto reject = [&](proto::RejectReason reason) {
+        proto::RequestRejected message;
+        message.set_request(proto::C2S_TARGET_REQ);
+        message.set_reason(reason);
+        transport_.send(connection, encodeFrame(proto::S2C_REQUEST_REJECTED, message));
+    };
+
+    switch (zone_.setTarget(*session.player, request.target_id()))
+    {
+    case TargetResult::NotFound:
+        reject(proto::REJECT_REASON_TARGET_NOT_FOUND);
+        break;
+    case TargetResult::TargetDead:
+        reject(proto::REJECT_REASON_TARGET_DEAD);
+        break;
+    case TargetResult::TargetReturning:
+        reject(proto::REJECT_REASON_TARGET_RETURNING);
+        break;
+    case TargetResult::PlayerDead:
+        logWarn("player " + std::to_string(*session.player) + " target ignored while dead");
+        break;
+    case TargetResult::Accepted:
+        break;
+    }
+}
+
+void GameServer::onCombat(EntityId viewer, const CombatEvent& event)
+{
+    proto::CombatResult message;
+    message.set_attacker_id(event.attacker);
+    message.set_target_id(event.target);
+    message.set_damage(event.damage);
+    message.set_target_hp(event.targetHp);
+    transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_COMBAT_RESULT, message));
+}
+
+void GameServer::onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick)
+{
+    proto::PlayerDeath message;
+    message.set_entity_id(player);
+    message.set_revive_tick(reviveTick);
+    transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_PLAYER_DEATH, message));
 }
 }

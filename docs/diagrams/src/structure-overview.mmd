@@ -19,6 +19,8 @@ classDiagram
         +onEntitySpawn(viewer, entity)
         +onEntityDespawn(viewer, entity, reason)
         +onPositionSync(viewer, tick, entities)
+        +onCombat(viewer, event)
+        +onPlayerDeath(viewer, player, reviveTick)
     }
     class TcpTransport {
         TCP와 길이 프리픽스
@@ -38,6 +40,7 @@ classDiagram
         +addPlayer()
         +removePlayer(id)
         +setDestination(id, destination)
+        +setTarget(id, target)
         +tick()
     }
 

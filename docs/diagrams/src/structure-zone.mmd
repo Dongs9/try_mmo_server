@@ -8,8 +8,9 @@ classDiagram
         +addPlayer()
         +removePlayer(id)
         +setDestination(id, destination)
+        +setTarget(id, target)
         +tick()
-        -movePlayers()
+        -updatePlayers()
         -updateSlimes()
         -updateVisibility()
         -sendPositions()
@@ -20,7 +21,14 @@ classDiagram
         +position
         +hp
         +level
+        +maxHp
+        +attack
+        +defense
         +destination
+        +target
+        +nextAttackTick
+        +nextRegenTick
+        +reviveTick
         +visible
     }
     class Slime {
@@ -28,8 +36,11 @@ classDiagram
         +spawnPoint
         +position
         +hp
+        +mode
         +destination
-        +nextWanderTick
+        +chaseTarget
+        +nextAttackTick
+        +respawnTick
     }
     class EntityView {
         +id

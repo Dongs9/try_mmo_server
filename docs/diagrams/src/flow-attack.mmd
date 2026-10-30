@@ -1,0 +1,21 @@
+flowchart TD
+    start([틱마다 플레이어 처리]) --> dead{사망 중?}
+    dead -- 예 --> revive{부활 틱 도달?}
+    revive -- 예 --> doRevive["입장 위치에서 부활, HP 전부 회복"]
+    revive -- 아니오 --> finish([다음 플레이어])
+    doRevive --> finish
+    dead -- 아니오 --> regen["1초마다 HP +1"]
+    regen --> target{대상 있음?}
+    target -- 아니오 --> move[목적지로 이동]
+    move --> finish
+    target -- 예 --> near["사거리 60까지 대상 쪽으로 이동"]
+    near --> range{사거리 안?}
+    range -- 아니오 --> finish
+    range -- 예 --> ready{"공격 주기(1초) 지남?"}
+    ready -- 아니오 --> finish
+    ready -- 예 --> hit["피해 계산, CombatResult 전송"]
+    hit --> alive{슬라임 HP 0?}
+    alive -- 아니오 --> chase["슬라임이 공격자를 추적"]
+    alive -- 예 --> kill["대상 해제, EntityDespawn DIED,<br/>30초 후 리스폰 예약"]
+    chase --> finish
+    kill --> finish

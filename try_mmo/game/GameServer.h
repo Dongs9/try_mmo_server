@@ -23,7 +23,7 @@ struct Session
 class GameServer final : private ITransportHandler, private IZoneObserver
 {
 public:
-    explicit GameServer(ITransport& transport);
+    GameServer(ITransport& transport, ZoneOptions zoneOptions);
 
     // stop이 true가 될 때까지 돌아간다.
     void run(const std::atomic<bool>& stop);
@@ -36,10 +36,13 @@ private:
     void onEntitySpawn(EntityId viewer, const EntityView& entity) override;
     void onEntityDespawn(EntityId viewer, EntityId entity, DespawnReason reason) override;
     void onPositionSync(EntityId viewer, std::uint32_t tick, const std::vector<EntitySnapshot>& entities) override;
+    void onCombat(EntityId viewer, const CombatEvent& event) override;
+    void onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick) override;
 
     bool allowRequest(ConnectionId connection, Session& session);
     void handleEnter(ConnectionId connection, Session& session);
     void handleMove(ConnectionId connection, Session& session, std::span<const std::byte> payload);
+    void handleTarget(ConnectionId connection, Session& session, std::span<const std::byte> payload);
 
     ITransport& transport_;
     Zone zone_;

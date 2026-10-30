@@ -1,0 +1,13 @@
+stateDiagram-v2
+    direction LR
+    [*] --> Wander
+    Wander --> Chase : 피격
+    Chase --> Return : 생성 지점 500 초과, 대상 사망, 연결 끊김
+    Chase --> Dead : HP 0
+    Return --> Wander : 도착, HP 전부 회복
+    Dead --> Wander : 30초 후 리스폰
+
+    Wander : 배회, 속도 40
+    Chase : 최근 공격자 추적, 속도 80, 2초마다 공격
+    Return : 복귀, 속도 160, 피격과 공격 없음
+    Dead : 사망, AOI에서 제외

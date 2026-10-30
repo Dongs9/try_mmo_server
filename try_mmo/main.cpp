@@ -1,4 +1,5 @@
 #include "Log.h"
+#include "game/Balance.h"
 #include "game/GameServer.h"
 #include "net/LagTransport.h"
 #include "net/TcpTransport.h"
@@ -38,6 +39,7 @@ struct Options
 {
     std::uint16_t port = kDefaultPort;
     int lagRttMs = 0;
+    int playerMaxHp = trymmo::balance::kPlayerMaxHp;
 };
 
 Options parseOptions(int argc, char* argv[])
@@ -53,6 +55,10 @@ Options parseOptions(int argc, char* argv[])
         else if (name == "--lag-rtt-ms")
         {
             options.lagRttMs = std::stoi(argv[i + 1]);
+        }
+        else if (name == "--debug-player-hp")
+        {
+            options.playerMaxHp = std::stoi(argv[i + 1]);
         }
     }
     return options;
@@ -78,7 +84,7 @@ int main(int argc, char* argv[])
             trymmo::logInfo("artificial lag enabled, rtt " + std::to_string(options.lagRttMs) + "ms");
         }
 
-        trymmo::GameServer server(*transport);
+        trymmo::GameServer server(*transport, {options.playerMaxHp});
         trymmo::logInfo("listening on port " + std::to_string(options.port));
         server.run(g_stop);
         trymmo::logInfo("stopped");

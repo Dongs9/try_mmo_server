@@ -1,49 +1,34 @@
 #include "Zone.h"
 
+#include "Balance.h"
+
 #include <cmath>
 #include <numbers>
 
 namespace trymmo
 {
+using namespace balance;
+
 namespace
 {
-constexpr float kMapSize = 1600.0f;
-constexpr Vec2 kEnterPosition{800.0f, 800.0f};
-constexpr std::size_t kMaxPlayers = 100;
-constexpr int kPlayerMaxHp = 100;
-constexpr int kPlayerStartLevel = 1;
-constexpr float kMoveStepPerTick = 10.0f;  // 초당 100, 10Hz
-constexpr float kAoiEnterDistance = 700.0f;
-constexpr float kAoiLeaveDistance = 800.0f;
-
-constexpr int kSlimeCount = 30;
-constexpr int kSlimeMaxHp = 120;
-constexpr int kSlimeLevel = 1;
-constexpr float kSlimeSpawnRadius = 600.0f;
-constexpr float kSlimeSafeRadius = 100.0f;  // 입장 위치 주변은 생성 구역에서 뺀다
-constexpr float kSlimeWanderRadius = 100.0f;
-constexpr float kSlimeWanderStepPerTick = 4.0f;  // 초당 40
-constexpr int kSlimeWanderMinTicks = 30;
-constexpr int kSlimeWanderMaxTicks = 60;
-
-float distanceSquared(Vec2 a, Vec2 b)
-{
-    const float dx = a.x - b.x;
-    const float dy = a.y - b.y;
-    return dx * dx + dy * dy;
-}
-
 // NaN도 비교가 거짓이 되어 여기서 걸러진다.
 bool isInsideMap(Vec2 position)
 {
     return position.x >= 0.0f && position.x <= kMapSize
         && position.y >= 0.0f && position.y <= kMapSize;
 }
+}
 
-// 도착하면 true. 남은 거리가 이동량 이하이면 목적지에 정확히 놓는다.
+float distanceBetween(Vec2 a, Vec2 b)
+{
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
 bool moveToward(Vec2& position, Vec2 destination, float step)
 {
-    const float remaining = std::sqrt(distanceSquared(position, destination));
+    const float remaining = distanceBetween(position, destination);
     if (remaining <= step)
     {
         position = destination;
@@ -55,10 +40,9 @@ bool moveToward(Vec2& position, Vec2 destination, float step)
     position.y += (destination.y - position.y) * ratio;
     return false;
 }
-}
 
-Zone::Zone(IZoneObserver& observer)
-    : observer_(observer), random_(std::random_device{}())
+Zone::Zone(IZoneObserver& observer, ZoneOptions options)
+    : observer_(observer), options_(options), random_(std::random_device{}())
 {
     spawnSlimes();
 }
@@ -74,8 +58,12 @@ std::optional<EntityView> Zone::addPlayer()
     player->id = nextEntityId_++;
     player->name = "Player" + std::to_string(nextPlayerNumber_++);
     player->position = kEnterPosition;
-    player->hp = kPlayerMaxHp;
+    player->hp = options_.playerMaxHp;
+    player->maxHp = options_.playerMaxHp;
     player->level = kPlayerStartLevel;
+    player->attack = kPlayerAttack;
+    player->defense = kPlayerDefense;
+    player->nextRegenTick = tick_ + kPlayerRegenPeriodTicks;
 
     EntityView view = makeView(*player);
     players_.emplace(player->id, std::move(player));
@@ -84,6 +72,7 @@ std::optional<EntityView> Zone::addPlayer()
 
 void Zone::removePlayer(EntityId id)
 {
+    // 이 플레이어를 쫓던 슬라임은 다음 틱에 대상이 없음을 보고 복귀한다.
     players_.erase(id);
     for (const auto& [viewerId, viewer] : players_)
     {
@@ -94,21 +83,57 @@ void Zone::removePlayer(EntityId id)
     }
 }
 
-bool Zone::setDestination(EntityId id, Vec2 destination)
+MoveResult Zone::setDestination(EntityId id, Vec2 destination)
 {
     if (!isInsideMap(destination))
     {
-        return false;
+        return MoveResult::OutOfMap;
     }
 
-    players_.at(id)->destination = destination;
-    return true;
+    Player& player = *players_.at(id);
+    if (player.reviveTick)
+    {
+        return MoveResult::PlayerDead;
+    }
+
+    player.destination = destination;
+    player.target.reset();
+    player.approaching = false;
+    return MoveResult::Accepted;
+}
+
+TargetResult Zone::setTarget(EntityId id, EntityId target)
+{
+    Player& player = *players_.at(id);
+    if (player.reviveTick)
+    {
+        return TargetResult::PlayerDead;
+    }
+
+    const auto found = slimes_.find(target);
+    if (found == slimes_.end())
+    {
+        return TargetResult::NotFound;
+    }
+    if (found->second->mode == SlimeMode::Dead)
+    {
+        return TargetResult::TargetDead;
+    }
+    if (found->second->mode == SlimeMode::Return)
+    {
+        return TargetResult::TargetReturning;
+    }
+
+    // 공격 주기 타이머는 건드리지 않는다. 대상 재지정으로 공격이 빨라지면 안 된다.
+    player.target = target;
+    player.destination.reset();
+    return TargetResult::Accepted;
 }
 
 void Zone::tick()
 {
     ++tick_;
-    movePlayers();
+    updatePlayers();
     updateSlimes();
     updateVisibility();
     sendPositions();
@@ -123,7 +148,7 @@ void Zone::spawnSlimes()
         slime->spawnPoint = randomSlimeSpawnPoint();
         slime->position = slime->spawnPoint;
         slime->hp = kSlimeMaxHp;
-        slime->nextWanderTick = std::uniform_int_distribution<int>(0, kSlimeWanderMaxTicks)(random_);
+        slime->nextWanderTick = randomWanderDelay();
         slimes_.emplace(slime->id, std::move(slime));
     }
 }
@@ -134,7 +159,7 @@ Vec2 Zone::randomSlimeSpawnPoint()
     for (;;)
     {
         const Vec2 point = randomPointNear(kEnterPosition, kSlimeSpawnRadius);
-        if (distanceSquared(point, kEnterPosition) > kSlimeSafeRadius * kSlimeSafeRadius)
+        if (distanceBetween(point, kEnterPosition) > kSlimeSafeRadius)
         {
             return point;
         }
@@ -148,37 +173,6 @@ Vec2 Zone::randomPointNear(Vec2 center, float radius)
     const float distance = radius * std::sqrt(unit(random_));
     const float angle = 2.0f * std::numbers::pi_v<float> * unit(random_);
     return {center.x + distance * std::cos(angle), center.y + distance * std::sin(angle)};
-}
-
-void Zone::movePlayers()
-{
-    for (const auto& [id, player] : players_)
-    {
-        if (player->destination && moveToward(player->position, *player->destination, kMoveStepPerTick))
-        {
-            player->destination.reset();
-        }
-    }
-}
-
-void Zone::updateSlimes()
-{
-    std::uniform_int_distribution<int> wanderDelay(kSlimeWanderMinTicks, kSlimeWanderMaxTicks);
-    for (const auto& [id, slime] : slimes_)
-    {
-        if (slime->destination)
-        {
-            if (moveToward(slime->position, *slime->destination, kSlimeWanderStepPerTick))
-            {
-                slime->destination.reset();
-            }
-        }
-        else if (tick_ >= slime->nextWanderTick)
-        {
-            slime->destination = randomPointNear(slime->spawnPoint, kSlimeWanderRadius);
-            slime->nextWanderTick = tick_ + wanderDelay(random_);
-        }
-    }
 }
 
 void Zone::updateVisibility()
@@ -195,24 +189,24 @@ void Zone::updateVisibility()
         }
         for (const auto& [slimeId, slime] : slimes_)
         {
-            updateVisibilityOf(*viewer, slimeId, slime->position, makeView(*slime));
+            if (slime->mode != SlimeMode::Dead)
+            {
+                updateVisibilityOf(*viewer, slimeId, slime->position, makeView(*slime));
+            }
         }
     }
 }
 
 void Zone::updateVisibilityOf(Player& viewer, EntityId other, Vec2 otherPosition, const EntityView& view)
 {
-    constexpr float enter = kAoiEnterDistance * kAoiEnterDistance;
-    constexpr float leave = kAoiLeaveDistance * kAoiLeaveDistance;
-
-    const float distance = distanceSquared(viewer.position, otherPosition);
+    const float distance = distanceBetween(viewer.position, otherPosition);
     const bool isVisible = viewer.visible.contains(other);
-    if (!isVisible && distance <= enter)
+    if (!isVisible && distance <= kAoiEnterDistance)
     {
         viewer.visible.insert(other);
         observer_.onEntitySpawn(viewer.id, view);
     }
-    else if (isVisible && distance > leave)
+    else if (isVisible && distance > kAoiLeaveDistance)
     {
         viewer.visible.erase(other);
         observer_.onEntityDespawn(viewer.id, other, DespawnReason::OutOfAoi);
@@ -245,25 +239,39 @@ EntitySnapshot Zone::makeSnapshot(EntityId id) const
 
 EntityView Zone::makeView(const Player& player)
 {
-    return {player.id, EntityType::Player, player.name, kPlayerMaxHp, player.position,
-            player.destination ? EntityState::Moving : EntityState::Idle};
+    return {player.id, EntityType::Player, player.name, player.maxHp, player.position, stateOf(player)};
 }
 
 EntityView Zone::makeView(const Slime& slime)
 {
-    return {slime.id, EntityType::Slime, "푸른 슬라임", kSlimeMaxHp, slime.position,
-            slime.destination ? EntityState::Moving : EntityState::Idle};
+    return {slime.id, EntityType::Slime, "푸른 슬라임", kSlimeMaxHp, slime.position, stateOf(slime)};
 }
 
 EntitySnapshot Zone::makeSnapshot(const Player& player)
 {
-    return {player.id, player.position, player.destination ? EntityState::Moving : EntityState::Idle,
-            player.hp, player.level};
+    return {player.id, player.position, stateOf(player), player.hp, player.level};
 }
 
 EntitySnapshot Zone::makeSnapshot(const Slime& slime)
 {
-    return {slime.id, slime.position, slime.destination ? EntityState::Moving : EntityState::Idle,
-            slime.hp, kSlimeLevel};
+    return {slime.id, slime.position, stateOf(slime), slime.hp, kSlimeLevel};
+}
+
+EntityState Zone::stateOf(const Player& player)
+{
+    if (player.reviveTick)
+    {
+        return EntityState::Dead;
+    }
+    return player.destination || player.approaching ? EntityState::Moving : EntityState::Idle;
+}
+
+EntityState Zone::stateOf(const Slime& slime)
+{
+    if (slime.mode == SlimeMode::Return)
+    {
+        return EntityState::Returning;
+    }
+    return slime.destination || slime.approaching ? EntityState::Moving : EntityState::Idle;
 }
 }

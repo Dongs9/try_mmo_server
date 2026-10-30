@@ -83,11 +83,13 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="game\GameServer.cpp" />
     <ClCompile Include="game\Zone.cpp" />
+    <ClCompile Include="game\ZoneCombat.cpp" />
     <ClCompile Include="net\LagTransport.cpp" />
     <ClCompile Include="net\TcpTransport.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Log.h" />
+    <ClInclude Include="game\Balance.h" />
     <ClInclude Include="game\GameServer.h" />
     <ClInclude Include="game\Zone.h" />
     <ClInclude Include="net\LagTransport.h" />

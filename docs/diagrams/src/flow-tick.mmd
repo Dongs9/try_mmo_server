@@ -8,8 +8,9 @@ flowchart TD
     due -- 예 --> move
 
     subgraph tick [Zone::tick]
-        move["movePlayers: 틱당 10 이동, 도착 판정"]
-        move --> aoi["updateVisibility: 진입 700, 이탈 800"]
+        move["updatePlayers: 부활, 회복, 이동, 공격"]
+        move --> slimes["updateSlimes: 배회, 추적, 복귀, 리스폰"]
+        slimes --> aoi["updateVisibility: 진입 700, 이탈 800"]
         aoi --> sync["sendPositions: 플레이어마다 스냅샷"]
     end
 

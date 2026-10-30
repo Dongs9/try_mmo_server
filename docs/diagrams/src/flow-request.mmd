@@ -8,4 +8,11 @@ flowchart LR
     parse -- 아니오 --> close[연결 끊기]
     parse -- 예 --> inside{맵 안 좌표?}
     inside -- 아니오 --> ignore2
-    inside -- 예 --> dest[목적지 저장]
+    inside -- 예 --> alive{플레이어 생존?}
+    alive -- 아니오 --> ignore2
+    alive -- 예 --> dest["목적지 저장, 대상 해제"]
+    msg -- 3000 TargetReq --> self{플레이어 생존?}
+    self -- 아니오 --> ignore2
+    self -- 예 --> found{"대상이 살아 있고 복귀 중 아님?"}
+    found -- 아니오 --> reject[RequestRejected 전송]
+    found -- 예 --> setTarget["대상 저장, 목적지 해제"]
