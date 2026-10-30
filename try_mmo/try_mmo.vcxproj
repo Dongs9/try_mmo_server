@@ -20,7 +20,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
+    <!-- Protobuf 생성 코드의 해시비트 검사는 NDEBUG가 없으면 켜지고 잘못된 주소를 읽는다. Debug도 릴리스 CRT와 NDEBUG를 쓰고 최적화만 끈다. -->
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <VcpkgConfiguration>Release</VcpkgConfiguration>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <EnableASAN>true</EnableASAN>
@@ -32,6 +34,7 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <Import Project="$(VsInstallRoot)\VC\vcpkg\scripts\buildsystems\msbuild\vcpkg.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings" />
   <ImportGroup Label="Shared" />
@@ -45,16 +48,19 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(GeneratedProtoDir);..\try_mmo_proto;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>ws2_32.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <PostBuildEvent>
@@ -75,7 +81,25 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="game\GameServer.cpp" />
+    <ClCompile Include="game\Zone.cpp" />
+    <ClCompile Include="net\LagTransport.cpp" />
+    <ClCompile Include="net\TcpTransport.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Log.h" />
+    <ClInclude Include="game\GameServer.h" />
+    <ClInclude Include="game\Zone.h" />
+    <ClInclude Include="net\LagTransport.h" />
+    <ClInclude Include="net\TcpTransport.h" />
+    <ClInclude Include="net\Transport.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\try_mmo_proto\try_mmo_proto.vcxproj">
+      <Project>{2B9D4A17-6C3E-4E81-A05F-1D7C8E3F4B62}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(VsInstallRoot)\VC\vcpkg\scripts\buildsystems\msbuild\vcpkg.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>
