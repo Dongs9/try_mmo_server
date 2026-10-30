@@ -3,5 +3,6 @@
     <Platform Name="x64" />
   </Configurations>
   <Project Path="try_mmo/try_mmo.vcxproj" />
+  <Project Path="try_mmo_bot/try_mmo_bot.vcxproj" />
   <Project Path="try_mmo_proto/try_mmo_proto.vcxproj" />
 </Solution>
