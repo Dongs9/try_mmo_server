@@ -242,7 +242,8 @@ void TcpTransport::flush(Connection& connection)
 void TcpTransport::extractFrames(ConnectionId id, Connection& connection)
 {
     std::size_t offset = 0;
-    while (connection.inbox.size() - offset >= kLengthPrefixSize)
+    // 처리 중 닫기로 결정되면 그 뒤에 온 프레임은 처리하지 않는다.
+    while (!connection.closing && connection.inbox.size() - offset >= kLengthPrefixSize)
     {
         const std::size_t length = std::to_integer<std::size_t>(connection.inbox[offset])
                                  | (std::to_integer<std::size_t>(connection.inbox[offset + 1]) << 8);
