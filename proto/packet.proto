@@ -1,51 +1,29 @@
-// try_mmo 프로토타입 메시지 스키마. 이 파일이 원본이다.
+// 클라이언트와 서버가 주고받는 메시지. 이 파일이 원본이다.
 // 프레임 형식은 docs/protocol.md 참고.
 // P1 범위만 담았다. 전투, 보상 메시지는 해당 단계에서 추가한다.
 syntax = "proto3";
 
-package trymmo;
+package trymmo.proto;
+
+import "common.proto";
 
 option csharp_namespace = "TryMmo.Protocol";
 option optimize_for = LITE_RUNTIME;
 
 // 프레임 헤더의 메시지 ID. C2S는 클라이언트 → 서버, S2C는 서버 → 클라이언트.
+// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대.
 enum MsgId {
   MSG_ID_UNSPECIFIED = 0;
-  C2S_ENTER_REQ = 1;
-  S2C_ENTER_RES = 2;
-  C2S_MOVE_REQ = 3;
-  S2C_ENTITY_SPAWN = 4;
-  S2C_ENTITY_DESPAWN = 5;
-  S2C_POSITION_SYNC = 6;
-}
 
-// 서버 좌표. 원점은 좌측 하단, X는 오른쪽, Y는 위쪽 증가.
-message Vec2 {
-  float x = 1;
-  float y = 2;
-}
+  // 입장
+  C2S_ENTER_REQ = 1000;
+  S2C_ENTER_RES = 1001;
 
-enum EntityType {
-  ENTITY_TYPE_UNSPECIFIED = 0;
-  ENTITY_TYPE_PLAYER = 1;
-}
-
-enum EntityState {
-  ENTITY_STATE_UNSPECIFIED = 0;
-  ENTITY_STATE_IDLE = 1;
-  ENTITY_STATE_MOVING = 2;
-}
-
-enum EnterResult {
-  ENTER_RESULT_UNSPECIFIED = 0;
-  ENTER_RESULT_OK = 1;
-  ENTER_RESULT_ZONE_FULL = 2;
-}
-
-enum DespawnReason {
-  DESPAWN_REASON_UNSPECIFIED = 0;
-  DESPAWN_REASON_LEFT = 1;        // 연결 끊김
-  DESPAWN_REASON_OUT_OF_AOI = 2;  // 이탈 거리 800 초과
+  // 월드
+  C2S_MOVE_REQ = 2000;
+  S2C_ENTITY_SPAWN = 2001;
+  S2C_ENTITY_DESPAWN = 2002;
+  S2C_POSITION_SYNC = 2003;
 }
 
 // 개체의 정적 정보와 등장 시점의 위치.
@@ -58,6 +36,14 @@ message EntityInfo {
   EntityState state = 6;
 }
 
+// ---------- 입장 ----------
+
+enum EnterResult {
+  ENTER_RESULT_UNSPECIFIED = 0;
+  ENTER_RESULT_OK = 1;
+  ENTER_RESULT_ZONE_FULL = 2;
+}
+
 // 입장 요청. 필드 없음. 임시 ID는 서버가 접속 순서대로 부여한다.
 message EnterReq {}
 
@@ -66,6 +52,14 @@ message EnterRes {
   EnterResult result = 1;
   EntityInfo self = 2;
   uint32 server_tick = 3;
+}
+
+// ---------- 월드 ----------
+
+enum DespawnReason {
+  DESPAWN_REASON_UNSPECIFIED = 0;
+  DESPAWN_REASON_LEFT = 1;        // 연결 끊김
+  DESPAWN_REASON_OUT_OF_AOI = 2;  // 이탈 거리 800 초과
 }
 
 // 이동 요청. 새 요청은 이전 목적지를 덮어쓴다.
