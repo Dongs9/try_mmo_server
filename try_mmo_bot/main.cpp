@@ -332,6 +332,52 @@ void testAoi(std::uint16_t port)
     check(enteredAt <= 700.0f, "enter distance is at most 700");
 }
 
+bool moveAndArrive(Client& client, float x, float y)
+{
+    client.moveTo(x, y);
+    return client.waitUntil(30s, [&] {
+        if (!client.sees(client.selfId()))
+        {
+            return false;
+        }
+        const SeenPosition& seen = client.position(client.selfId());
+        return seen.x == x && seen.y == y && seen.state == proto::ENTITY_STATE_IDLE;
+    });
+}
+
+void testAoiBoundary(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+    check(moveAndArrive(b, 300.0f, 800.0f), "b moved to boundary test position");
+    b.waitUntil(2s, [&] { return b.spawned(a.selfId()); });
+
+    // b는 x=300에 있으므로 a의 x에서 300을 뺀 값이 거리다.
+    for (int round = 1; round <= 2; ++round)
+    {
+        const std::string prefix = "round " + std::to_string(round) + ": ";
+        const std::size_t despawnsBefore = b.despawns().size();
+
+        check(moveAndArrive(a, 1100.0f, 800.0f), prefix + "a arrived at distance 800");
+        b.pump(300ms);
+        check(b.spawned(a.selfId()), prefix + "still visible at distance 800");
+
+        check(moveAndArrive(a, 1101.0f, 800.0f), prefix + "a arrived at distance 801");
+        check(b.waitUntil(1s, [&] { return !b.spawned(a.selfId()); }), prefix + "left aoi at distance 801");
+
+        check(moveAndArrive(a, 1001.0f, 800.0f), prefix + "a arrived at distance 701");
+        b.pump(300ms);
+        check(!b.spawned(a.selfId()), prefix + "still hidden at distance 701");
+
+        check(moveAndArrive(a, 1000.0f, 800.0f), prefix + "a arrived at distance 700");
+        check(b.waitUntil(1s, [&] { return b.spawned(a.selfId()); }), prefix + "entered aoi at distance 700");
+
+        check(b.despawns().size() == despawnsBefore + 1, prefix + "exactly one despawn");
+    }
+}
+
 void testDisconnect(std::uint16_t port)
 {
     Client a(port);
@@ -376,6 +422,14 @@ void testBadInput(std::uint16_t port)
     malformed.sendRaw({3, 0, static_cast<char>(0xD0), 0x07, static_cast<char>(0xFF)});  // C2S_MOVE_REQ
     malformed.pump(500ms);
     check(malformed.closed(), "malformed move closes connection");
+
+    // 한 번에 보낸 [잘못된 이동][입장 요청]. 닫는 연결은 응답을 보내지 않으므로
+    // 뒤 프레임이 처리되지 않았는지는 서버 로그에 입장 기록이 없는 것으로 확인한다.
+    Client afterClose(port);
+    afterClose.sendRaw({3, 0, static_cast<char>(0xD0), 0x07, static_cast<char>(0xFF),
+                        2, 0, static_cast<char>(0xE8), 0x03});
+    afterClose.pump(500ms);
+    check(afterClose.closed(), "malformed frame closes connection in burst");
 }
 
 void testRequestLimit(std::uint16_t port)
@@ -430,6 +484,7 @@ int main(int argc, char* argv[])
         testMove(port);
         testTickRate(port);
         testAoi(port);
+        testAoiBoundary(port);
         testDisconnect(port);
         testBadInput(port);
         testRequestLimit(port);
