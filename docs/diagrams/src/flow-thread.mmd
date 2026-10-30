@@ -1,0 +1,14 @@
+flowchart TD
+    signal[Ctrl+C 콘솔 스레드] -- g_stop 설정 --> loop
+
+    subgraph main [메인 스레드 하나]
+        loop[GameServer 틱 루프]
+        zone[Zone]
+        lag["LagTransport<br/>--lag-rtt-ms일 때만, 송수신을 편도 지연"]
+        tcp["TcpTransport<br/>WSAPoll"]
+        loop <-- tick, 사건 --> zone
+        loop <-- poll, send, 이벤트 --> lag
+        lag <-- poll, send, 이벤트 --> tcp
+    end
+
+    tcp <--> clients[(클라이언트 소켓)]

@@ -1,0 +1,9 @@
+flowchart TD
+    recv["recv: 바이트를 inbox에 쌓기"] --> enough{"길이 프리픽스 2바이트 있음?"}
+    enough -- 아니오 --> keep[다음 수신까지 보관]
+    enough -- 예 --> valid{"length가 2~8192?"}
+    valid -- 아니오 --> close[연결 끊기]
+    valid -- 예 --> whole{프레임 전체 도착?}
+    whole -- 아니오 --> keep
+    whole -- 예 --> frame[GameServer::onFrame 호출]
+    frame --> enough

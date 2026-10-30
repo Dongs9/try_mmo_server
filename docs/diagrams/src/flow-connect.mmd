@@ -1,0 +1,28 @@
+sequenceDiagram
+    participant C as 클라이언트
+    participant T as TcpTransport
+    participant G as GameServer
+    participant Z as Zone
+
+    C->>T: TCP 접속
+    T->>G: onConnected
+    G->>G: Session 생성
+    C->>T: EnterReq
+    T->>G: onFrame
+    G->>Z: addPlayer
+    alt 100명 미만
+        Z-->>G: EntityView
+        G-->>C: EnterRes OK, self
+    else 존이 가득 참
+        Z-->>G: 없음
+        G-->>C: EnterRes ZONE_FULL, 연결 유지
+    end
+    Note over G,Z: 다음 틱에서 AOI 판정
+    Z->>G: onEntitySpawn
+    G-->>C: EntitySpawn
+    Z->>G: onPositionSync
+    G-->>C: PositionSync
+    C->>T: 연결 끊김
+    T->>G: onDisconnected
+    G->>Z: removePlayer
+    Z->>G: onEntityDespawn, 주변 플레이어마다

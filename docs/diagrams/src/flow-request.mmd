@@ -1,0 +1,11 @@
+flowchart LR
+    frame[onFrame] --> limit{"이번 1초에 20개 이하?"}
+    limit -- 아니오 --> ignore1["무시, 구간당 1회 로그"]
+    limit -- 예 --> msg{메시지 ID}
+    msg -- 1000 EnterReq --> enter[handleEnter]
+    msg -- 2000 MoveReq --> parse{Protobuf 해석 성공?}
+    msg -- 그 외 --> ignore2[무시, 로그]
+    parse -- 아니오 --> close[연결 끊기]
+    parse -- 예 --> inside{맵 안 좌표?}
+    inside -- 아니오 --> ignore2
+    inside -- 예 --> dest[목적지 저장]

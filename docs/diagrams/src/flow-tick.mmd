@@ -1,0 +1,20 @@
+flowchart TD
+    start([GameServer::run]) --> stopped{종료 신호?}
+    stopped -- 예 --> finish([종료])
+    stopped -- 아니오 --> wait[다음 틱까지 남은 시간 계산]
+    wait --> poll["transport.poll(남은 시간)"]
+    poll --> due{틱 시각 도달?}
+    due -- 아니오 --> stopped
+    due -- 예 --> move
+
+    subgraph tick [Zone::tick]
+        move["movePlayers: 틱당 10 이동, 도착 판정"]
+        move --> aoi["updateVisibility: 진입 700, 이탈 800"]
+        aoi --> sync["sendPositions: 플레이어마다 스냅샷"]
+    end
+
+    sync --> advance[다음 틱 시각에 100ms 더하기]
+    advance --> behind{5틱 이상 밀림?}
+    behind -- 예 --> skip[밀린 틱 버리기]
+    behind -- 아니오 --> stopped
+    skip --> stopped

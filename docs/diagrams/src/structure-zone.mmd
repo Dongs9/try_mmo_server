@@ -1,0 +1,41 @@
+classDiagram
+    direction LR
+
+    class Zone {
+        -nextEntityId_
+        -tick_
+        +addPlayer()
+        +removePlayer(id)
+        +setDestination(id, destination)
+        +tick()
+        -movePlayers()
+        -updateVisibility()
+        -sendPositions()
+    }
+    class Player {
+        +id
+        +name
+        +position
+        +hp
+        +level
+        +destination
+        +visible
+    }
+    class EntityView {
+        +id
+        +name
+        +maxHp
+        +position
+        +state
+    }
+    class EntitySnapshot {
+        +id
+        +position
+        +state
+        +hp
+        +level
+    }
+
+    Zone *-- Player : 최대 100명
+    Zone ..> EntityView : 등장 때 생성
+    Zone ..> EntitySnapshot : 틱마다 생성

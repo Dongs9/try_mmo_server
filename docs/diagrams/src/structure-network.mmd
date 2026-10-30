@@ -1,0 +1,32 @@
+classDiagram
+    direction LR
+
+    class TcpTransport {
+        -nextConnectionId_
+        +poll(timeout)
+        +send(connection, frame)
+        +close(connection)
+        -acceptAll()
+        -receive(id, connection)
+        -flush(connection)
+        -extractFrames(id, connection)
+        -removeClosed()
+    }
+    class Connection {
+        +socket
+        +inbox
+        +outbox
+        +closing
+    }
+    class Socket {
+        +get()
+        소멸할 때 closesocket
+    }
+    class WinsockRuntime {
+        WSAStartup, WSACleanup
+    }
+
+    TcpTransport *-- WinsockRuntime : 먼저 생성, 나중에 소멸
+    TcpTransport *-- Socket : 리슨 소켓
+    TcpTransport *-- Connection : 연결 ID마다 1개
+    Connection *-- Socket : 클라이언트 소켓

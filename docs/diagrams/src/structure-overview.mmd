@@ -1,0 +1,53 @@
+classDiagram
+    direction LR
+
+    class ITransport {
+        <<interface>>
+        +setHandler(handler)
+        +poll(timeout)
+        +send(connection, frame)
+        +close(connection)
+    }
+    class ITransportHandler {
+        <<interface>>
+        +onConnected(connection)
+        +onDisconnected(connection)
+        +onFrame(connection, frame)
+    }
+    class IZoneObserver {
+        <<interface>>
+        +onEntitySpawn(viewer, entity)
+        +onEntityDespawn(viewer, entity, reason)
+        +onPositionSync(viewer, tick, entities)
+    }
+    class TcpTransport {
+        TCP와 길이 프리픽스
+    }
+    class LagTransport {
+        디버그용 인위 지연
+    }
+    class GameServer {
+        +run(stop)
+        틱 루프, 메시지 변환
+    }
+    class Session {
+        +player
+        +requestCount
+    }
+    class Zone {
+        +addPlayer()
+        +removePlayer(id)
+        +setDestination(id, destination)
+        +tick()
+    }
+
+    ITransport <|.. TcpTransport
+    ITransport <|.. LagTransport
+    ITransportHandler <|.. LagTransport
+    ITransportHandler <|.. GameServer
+    IZoneObserver <|.. GameServer
+    LagTransport --> ITransport : 감싼다
+    GameServer --> ITransport : 사용
+    GameServer *-- Zone : 소유
+    GameServer *-- Session : 연결마다 1개
+    Zone --> IZoneObserver : 사건 전달
