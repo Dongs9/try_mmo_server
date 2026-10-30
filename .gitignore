@@ -1,3 +1,13 @@
+# Visual Studio
+.vs/
+[Xx]64/
+*.user
+*.tlog
+*.idb
+*.ipch
+*.VC.db
+*.VC.opendb
+
 # Prerequisites
 *.d
 
