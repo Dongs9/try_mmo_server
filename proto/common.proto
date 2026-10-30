@@ -24,4 +24,6 @@ enum EntityState {
   ENTITY_STATE_MOVING = 2;
   ENTITY_STATE_RETURNING = 3;  // 슬라임 복귀 중. 대상 지정, 피격 불가
   ENTITY_STATE_DEAD = 4;
+  ENTITY_STATE_STUNNED = 5;  // 슬라임 기절 중. 이동과 공격 정지, 피격 가능
+  ENTITY_STATE_ROLLING = 6;  // 플레이어 구르기 중
 }

@@ -11,7 +11,7 @@ option csharp_namespace = "TryMmo.Protocol";
 option optimize_for = LITE_RUNTIME;
 
 // 프레임 헤더의 메시지 ID. C2S는 클라이언트 → 서버, S2C는 서버 → 클라이언트.
-// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대, 전투 3000번대, 성장 4000번대.
+// 번호는 구간별로 나눈다. 입장 1000번대, 월드 2000번대, 전투 3000번대, 성장 4000번대, 스킬 5000번대.
 enum MsgId {
   MSG_ID_UNSPECIFIED = 0;
 
@@ -33,6 +33,10 @@ enum MsgId {
 
   // 성장
   S2C_REWARD = 4000;
+
+  // 스킬
+  C2S_SKILL_REQ = 5000;
+  S2C_SKILL_USED = 5001;
 }
 
 // 개체의 정적 정보와 등장 시점의 위치.
@@ -120,6 +124,7 @@ message CombatResult {
   uint32 target_id = 2;
   int32 damage = 3;
   int32 target_hp = 4;
+  SkillId skill = 5;  // 기본 공격이면 UNSPECIFIED
 }
 
 // 플레이어 사망. revive_tick에 입장 위치에서 부활한다.
@@ -133,12 +138,18 @@ enum RejectReason {
   REJECT_REASON_TARGET_NOT_FOUND = 1;
   REJECT_REASON_TARGET_DEAD = 2;
   REJECT_REASON_TARGET_RETURNING = 3;
+  REJECT_REASON_SKILL_COOLDOWN = 4;
+  REJECT_REASON_SKILL_WHILE_ROLLING = 5;
+  REJECT_REASON_INVALID_DIRECTION = 6;
+  REJECT_REASON_INVALID_SKILL = 7;
 }
 
 // 요청 거부. 사망 중 입력과 맵 밖 이동은 이 메시지 없이 무시된다.
 message RequestRejected {
   MsgId request = 1;
   RejectReason reason = 2;
+  SkillId skill = 3;                  // 스킬 요청의 거부일 때
+  uint32 cooldown_remaining_ms = 4;   // 쿨다운 거부일 때 남은 시간
 }
 
 // ---------- 성장 ----------
@@ -163,4 +174,27 @@ message Reward {
   int32 levels_gained = 4;
   PlayerStats stats = 5;
   Vec2 slime_position = 6;  // 처치 위치. 획득 표시용
+}
+
+// ---------- 스킬 ----------
+
+enum SkillId {
+  SKILL_ID_UNSPECIFIED = 0;
+  SKILL_ID_ROLL = 1;
+  SKILL_ID_SPIN_KICK = 2;
+}
+
+// 스킬 사용 요청. direction은 구르기의 방향 단위 벡터다. 회전차기는 비워 둔다.
+message SkillReq {
+  SkillId skill = 1;
+  Vec2 direction = 2;
+}
+
+// 스킬이 시작됐다. 시전자와 시전자가 AOI 안에 있는 플레이어가 받는다.
+// 쿨다운 표시는 이 메시지로 시작하고, 피해는 CombatResult로 온다.
+message SkillUsed {
+  uint32 entity_id = 1;
+  SkillId skill = 2;
+  uint32 cooldown_end_tick = 3;  // 이 틱부터 다시 쓸 수 있다
+  Vec2 direction = 4;            // 구르기 방향
 }
