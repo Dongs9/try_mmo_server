@@ -34,6 +34,7 @@ struct SeenPosition
     int hp = 0;
     int level = 0;
     int maxHp = 0;
+    std::uint32_t tick = 0;
 };
 
 struct Despawn
@@ -61,6 +62,22 @@ struct Hit
     std::uint32_t tick = 0;
     int sequence = 0;
     float distance = -1.0f;  // 직전 스냅샷 기준 두 개체의 거리
+    proto::SkillId skill = proto::SKILL_ID_UNSPECIFIED;
+};
+
+struct SkillRecord
+{
+    std::uint32_t caster = 0;
+    proto::SkillId skill = proto::SKILL_ID_UNSPECIFIED;
+    std::uint32_t cooldownEndTick = 0;
+    std::uint32_t tick = 0;
+};
+
+struct RejectRecord
+{
+    proto::RejectReason reason = proto::REJECT_REASON_UNSPECIFIED;
+    proto::SkillId skill = proto::SKILL_ID_UNSPECIFIED;
+    std::uint32_t remainingMs = 0;
 };
 
 struct Reward
@@ -141,6 +158,15 @@ public:
         sendMessage(proto::C2S_TARGET_REQ, request);
     }
 
+    void skill(proto::SkillId id, float x = 0.0f, float y = 0.0f)
+    {
+        proto::SkillReq request;
+        request.set_skill(id);
+        request.mutable_direction()->set_x(x);
+        request.mutable_direction()->set_y(y);
+        sendMessage(proto::C2S_SKILL_REQ, request);
+    }
+
     // 주어진 시간 동안 받은 메시지를 상태에 반영한다.
     void pump(milliseconds time)
     {
@@ -209,6 +235,9 @@ public:
     const std::vector<proto::RejectReason>& rejects() const { return rejects_; }
     const std::vector<Death>& deaths() const { return deaths_; }
     const std::vector<Reward>& rewards() const { return rewards_; }
+    const std::vector<SkillRecord>& skills() const { return skills_; }
+    const std::vector<RejectRecord>& rejectRecords() const { return rejectRecords_; }
+    const std::vector<Hit>& allHits() const { return hits_; }
     const proto::PlayerStats& enterStats() const { return enterStats_; }
     const SpawnRecord& spawnRecord(std::uint32_t entity) const { return spawnRecords_.at(entity); }
 
@@ -297,7 +326,7 @@ private:
             for (const proto::EntityPosition& entity : message.entities())
             {
                 const SeenPosition seen{entity.position().x(), entity.position().y(), entity.state(),
-                                        entity.hp(), entity.level(), entity.max_hp()};
+                                        entity.hp(), entity.level(), entity.max_hp(), message.server_tick()};
                 positions_[entity.entity_id()] = seen;
                 history_[entity.entity_id()].push_back(seen);
             }
@@ -315,7 +344,14 @@ private:
                 distance = distanceBetween(attacker.x, attacker.y, target.x, target.y);
             }
             hits_.push_back({message.attacker_id(), message.target_id(), message.damage(), message.target_hp(),
-                             lastTick_, ++sequence_, distance});
+                             lastTick_, ++sequence_, distance, message.skill()});
+            break;
+        }
+        case proto::S2C_SKILL_USED:
+        {
+            proto::SkillUsed message;
+            trymmo::decodePayload(payload, message);
+            skills_.push_back({message.entity_id(), message.skill(), message.cooldown_end_tick(), message.server_tick()});
             break;
         }
         case proto::S2C_REWARD:
@@ -338,6 +374,7 @@ private:
             proto::RequestRejected message;
             trymmo::decodePayload(payload, message);
             rejects_.push_back(message.reason());
+            rejectRecords_.push_back({message.reason(), message.skill(), message.cooldown_remaining_ms()});
             break;
         }
         default:
@@ -360,6 +397,8 @@ private:
     std::vector<proto::RejectReason> rejects_;
     std::vector<Death> deaths_;
     std::vector<Reward> rewards_;
+    std::vector<SkillRecord> skills_;
+    std::vector<RejectRecord> rejectRecords_;
     proto::PlayerStats enterStats_;
     int sequence_ = 0;
 };
@@ -1077,7 +1116,7 @@ void testLevelCap(std::uint16_t port)
 }
 
 // 서버를 --debug-player-hp 16으로 띄워야 한다.
-void testDeadContributor(std::uint16_t port)
+void testDeadContributor(std::uint16_t port, bool levelsUp)
 {
     Client a(port);
     Client b(port);
@@ -1109,8 +1148,440 @@ void testDeadContributor(std::uint16_t port)
         const Death& death = a.deaths().back();
         std::cout << "[INFO] reward tick " << a.rewards().front().tick << " revive tick " << death.reviveTick << '\n';
         check(a.rewards().front().tick < death.reviveTick, "reward arrived while dead");
-        check(a.rewards().front().expGained == 5, "dead contributor gets full exp");
+        if (!levelsUp)
+        {
+            check(a.rewards().front().expGained == 5, "dead contributor gets full exp");
+            return;
+        }
+
+        // 서버를 --debug-kill-exp 20과 함께 띄운다. 사망 중 Lv.2가 된다.
+        const proto::PlayerStats& stats = a.rewards().front().stats;
+        check(a.rewards().front().levelsGained == 1 && stats.level() == 2 && stats.max_hp() == 19,
+              "level up while dead");
+        const std::uint32_t rewardTick = a.rewards().front().tick;
+        check(a.waitUntil(1s, [&] { return a.lastTick() > rewardTick; }), "sync after level up");
+        check(a.position(a.selfId()).state == proto::ENTITY_STATE_DEAD && a.position(a.selfId()).hp == 0,
+              "hp stays 0 while dead after level up");
+        check(a.position(a.selfId()).maxHp == 19 && a.position(a.selfId()).level == 2, "sync shows new max hp while dead");
+        check(a.waitUntil(5s, [&] { return a.position(a.selfId()).state != proto::ENTITY_STATE_DEAD; }), "revived");
+        std::cout << "[INFO] revive hp " << a.position(a.selfId()).hp << "/" << a.position(a.selfId()).maxHp << '\n';
+        check(a.position(a.selfId()).hp == 19, "revive restores new max hp");
     }
+}
+
+bool waitForRejects(Client& client, std::size_t count)
+{
+    return client.waitUntil(2s, [&] { return client.rejectRecords().size() >= count; });
+}
+
+std::uint32_t lastSkillTick(const Client& client)
+{
+    return client.skills().empty() ? 0 : client.skills().back().tick;
+}
+
+bool isUnderCooldown(const Client& client, std::uint32_t endTick)
+{
+    return client.lastTick() < endTick;
+}
+
+// 구르기 시작 전의 IDLE을 끝으로 착각하지 않도록 ROLLING을 먼저 본다.
+bool waitRollFinished(Client& client)
+{
+    return client.waitUntil(2s, [&] { return client.position(client.selfId()).state == proto::ENTITY_STATE_ROLLING; })
+        && client.waitUntil(2s, [&] { return client.position(client.selfId()).state == proto::ENTITY_STATE_IDLE; });
+}
+
+void testSkillRules(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    a.waitUntil(2s, [&] { return a.sees(a.selfId()); });
+
+    a.skill(proto::SKILL_ID_ROLL, 0.0f, 0.0f);
+    a.skill(proto::SKILL_ID_ROLL, 2.0f, 0.0f);
+    a.skill(proto::SKILL_ID_ROLL, std::nanf(""), 0.0f);
+    a.skill(static_cast<proto::SkillId>(99));
+    check(waitForRejects(a, 4), "invalid skill requests rejected");
+    if (a.rejectRecords().size() >= 4)
+    {
+        const auto& rejects = a.rejectRecords();
+        check(rejects[0].reason == proto::REJECT_REASON_INVALID_DIRECTION
+                  && rejects[1].reason == proto::REJECT_REASON_INVALID_DIRECTION
+                  && rejects[2].reason == proto::REJECT_REASON_INVALID_DIRECTION, "bad direction rejected");
+        check(rejects[3].reason == proto::REJECT_REASON_INVALID_SKILL, "unknown skill rejected");
+    }
+    check(a.skills().empty(), "rejected skills do not start");
+
+    const std::size_t rejectsBefore = a.rejectRecords().size();
+    a.skill(proto::SKILL_ID_ROLL, 1.0f, 0.0f);
+    a.skill(proto::SKILL_ID_SPIN_KICK);
+    check(waitForRejects(a, rejectsBefore + 1)
+              && a.rejectRecords().back().reason == proto::REJECT_REASON_SKILL_WHILE_ROLLING,
+          "skill while rolling rejected");
+    check(a.waitUntil(2s, [&] { return !a.skills().empty(); }), "roll started");
+    if (a.skills().empty())
+    {
+        return;
+    }
+    const SkillRecord roll = a.skills().back();
+    check(roll.cooldownEndTick - roll.tick == 30, "roll cooldown is 3 seconds");
+
+    check(waitRollFinished(a), "roll finished");
+    const SeenPosition& self = a.position(a.selfId());
+    std::cout << "[INFO] rolled to " << self.x << ", " << self.y << '\n';
+    check(self.x == 890.0f && self.y == 800.0f, "roll moves 90 in a straight line");
+
+    int rollingTicks = 0;
+    for (const SeenPosition& seen : a.history(a.selfId()))
+    {
+        rollingTicks += seen.state == proto::ENTITY_STATE_ROLLING ? 1 : 0;
+    }
+    check(rollingTicks == 3, "rolling lasts 0.3 seconds");
+
+    const std::size_t rejectsAfterRoll = a.rejectRecords().size();
+    a.skill(proto::SKILL_ID_ROLL, -1.0f, 0.0f);
+    check(waitForRejects(a, rejectsAfterRoll + 1)
+              && a.rejectRecords().back().reason == proto::REJECT_REASON_SKILL_COOLDOWN, "roll cooldown rejected");
+    if (!a.rejectRecords().empty())
+    {
+        const RejectRecord& reject = a.rejectRecords().back();
+        std::cout << "[INFO] roll remaining ms " << reject.remainingMs << '\n';
+        check(reject.skill == proto::SKILL_ID_ROLL && reject.remainingMs > 0 && reject.remainingMs <= 3000,
+              "reject reports remaining cooldown");
+    }
+
+    // 공용 쿨다운은 없으므로 구르기 쿨다운 중에도 회전차기를 쓸 수 있다.
+    const std::size_t skillsBefore = a.skills().size();
+    a.skill(proto::SKILL_ID_SPIN_KICK);
+    check(a.waitUntil(2s, [&] { return a.skills().size() > skillsBefore; }), "no shared cooldown");
+    if (a.skills().size() > skillsBefore)
+    {
+        check(a.skills().back().cooldownEndTick - a.skills().back().tick == 55, "spin cooldown is 5.5 seconds");
+    }
+
+    const std::size_t rejectsBeforeSpin = a.rejectRecords().size();
+    a.skill(proto::SKILL_ID_SPIN_KICK);
+    check(waitForRejects(a, rejectsBeforeSpin + 1)
+              && a.rejectRecords().back().reason == proto::REJECT_REASON_SKILL_COOLDOWN, "spin cooldown rejected");
+
+    a.waitUntil(4s, [&] { return !isUnderCooldown(a, roll.cooldownEndTick + 2); });
+    const std::size_t skillsAfterWait = a.skills().size();
+    a.skill(proto::SKILL_ID_ROLL, -1.0f, 0.0f);
+    check(a.waitUntil(2s, [&] { return a.skills().size() > skillsAfterWait; }), "roll usable after cooldown");
+}
+
+void testRollHit(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    const std::uint32_t slime = waitForSlime(a);
+    const SeenPosition first = a.position(slime);
+    const SeenPosition start = a.position(a.selfId());
+    const float gap = distanceBetween(start.x, start.y, first.x, first.y);
+    const float ratio = 45.0f / gap;
+    moveAndArrive(a, first.x + (start.x - first.x) * ratio, first.y + (start.y - first.y) * ratio);
+
+    const SeenPosition self = a.position(a.selfId());
+    const SeenPosition seen = a.position(slime);
+    const float distance = distanceBetween(self.x, self.y, seen.x, seen.y);
+    a.skill(proto::SKILL_ID_ROLL, (seen.x - self.x) / distance, (seen.y - self.y) / distance);
+    check(a.waitUntil(3s, [&] { return !a.hitsBy(a.selfId(), slime).empty(); }), "roll hits slime on its path");
+    a.pump(500ms);
+
+    const auto hits = a.hitsBy(a.selfId(), slime);
+    if (hits.empty())
+    {
+        return;
+    }
+    std::cout << "[INFO] roll damage " << hits.front().damage << '\n';
+    check(hits.size() == 1, "roll hits each target once");
+    check(hits.front().skill == proto::SKILL_ID_ROLL, "combat result names roll");
+    check(hits.front().damage >= 90 && hits.front().damage <= 93, "roll deals double damage");
+
+    check(a.waitUntil(8s, [&] { return !a.hitsBy(slime, a.selfId()).empty(); }), "slime chases after skill hit");
+
+    a.skill(proto::SKILL_ID_SPIN_KICK);
+    check(a.waitUntil(3s, [&] { return !a.despawnsOf(slime).empty(); }), "spin kick kills weakened slime");
+    const auto spinHits = a.hitsBy(a.selfId(), slime);
+    if (spinHits.size() == 2)
+    {
+        std::cout << "[INFO] spin damage " << spinHits.back().damage << '\n';
+        check(spinHits.back().skill == proto::SKILL_ID_SPIN_KICK, "combat result names spin kick");
+        check(spinHits.back().damage >= 72 && spinHits.back().damage <= 75, "spin deals 1.6x damage");
+    }
+    check(waitForRewards(a, 1), "skill kill gives reward");
+    if (!a.rewards().empty())
+    {
+        check(a.rewards().front().expGained == 5 && a.rewards().front().slime == slime, "reward is for skill kill");
+    }
+}
+
+void testRollInputs(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    const std::uint32_t attackTarget = waitForSlime(a);
+
+    // 구르기 전에 지정한 대상은 끝난 뒤 이어서 공격한다.
+    a.target(attackTarget);
+    a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), attackTarget).empty(); });
+    a.skill(proto::SKILL_ID_ROLL, 1.0f, 0.0f);
+    check(a.waitUntil(4s, [&] { return a.hitsBy(a.selfId(), attackTarget).size() >= 2; }),
+          "attack resumes after roll");
+    stopWhereYouAre(a);
+
+    // 구르기 중 대상 지정은 끝난 뒤 적용한다.
+    a.waitUntil(5s, [&] { return !isUnderCooldown(a, a.skills().back().cooldownEndTick + 1); });
+    const std::uint32_t pending = waitForSlime(a, attackTarget);
+    a.skill(proto::SKILL_ID_ROLL, -1.0f, 0.0f);
+    a.target(pending);
+    check(a.waitUntil(20s, [&] { return !a.hitsBy(a.selfId(), pending).empty(); }), "target during roll applies after");
+    stopWhereYouAre(a);
+
+    // 구르기 중 입력은 마지막 것만 남는다. 대상 뒤의 이동이 이긴다.
+    a.waitUntil(5s, [&] { return !isUnderCooldown(a, a.skills().back().cooldownEndTick + 1); });
+    const std::uint32_t skipped = waitForSlime(a, pending);
+    const std::size_t hitsBefore = a.hitsBy(a.selfId(), skipped).size();
+    const SeenPosition self = a.position(a.selfId());
+    const float destinationX = self.x < 800.0f ? self.x + 120.0f : self.x - 120.0f;
+    a.skill(proto::SKILL_ID_ROLL, 0.0f, 1.0f);
+    a.target(skipped);
+    a.moveTo(destinationX, self.y);
+    check(a.waitUntil(5s, [&] {
+              return a.position(a.selfId()).x == destinationX && a.position(a.selfId()).y == self.y;
+          }), "move during roll applies after");
+    check(a.hitsBy(a.selfId(), skipped).size() == hitsBefore, "last input wins over target");
+}
+
+void testRollBoundary(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    check(moveAndArrive(a, 1590.0f, 800.0f), "moved near the edge");
+
+    a.skill(proto::SKILL_ID_ROLL, 1.0f, 0.0f);
+    check(waitRollFinished(a), "roll ended");
+    check(a.position(a.selfId()).x == 1600.0f && a.position(a.selfId()).y == 800.0f, "roll stops at map edge");
+
+    int rollingTicks = 0;
+    for (const SeenPosition& seen : a.history(a.selfId()))
+    {
+        rollingTicks += seen.state == proto::ENTITY_STATE_ROLLING ? 1 : 0;
+    }
+    check(rollingTicks == 3, "rolling lasts full time at the edge");
+
+    a.waitUntil(5s, [&] { return !isUnderCooldown(a, a.skills().back().cooldownEndTick + 1); });
+    check(moveAndArrive(a, 1590.0f, 800.0f), "moved back from the edge");
+    a.skill(proto::SKILL_ID_ROLL, 0.6f, 0.8f);
+    a.pump(1s);
+    const SeenPosition& self = a.position(a.selfId());
+    std::cout << "[INFO] diagonal stop " << self.x << ", " << self.y << '\n';
+    check(self.x == 1600.0f && std::abs(self.y - 813.33f) < 0.1f, "diagonal roll does not slide along the edge");
+}
+
+// 서버를 --debug-slime-cluster 1로 띄워야 한다. 입장 위치에 슬라임이 모여 있다.
+void testSpinMaxTargets(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+    a.waitUntil(3s, [&] { return a.sees(a.selfId()) && a.nearestSlime() != 0; });
+    a.pump(300ms);
+
+    a.skill(proto::SKILL_ID_SPIN_KICK);
+    a.waitUntil(2s, [&] { return a.allHits().size() >= 10; });
+    a.pump(500ms);
+
+    std::vector<std::uint32_t> hitSlimes;
+    for (const Hit& hit : a.allHits())
+    {
+        if (hit.attacker == a.selfId() && hit.skill == proto::SKILL_ID_SPIN_KICK)
+        {
+            hitSlimes.push_back(hit.target);
+        }
+    }
+    std::cout << "[INFO] spin targets " << hitSlimes.size() << '\n';
+    check(hitSlimes.size() == 10, "spin kick hits at most 10 targets");
+
+    // 위치를 처음 본 스냅샷 기준으로 맞은 슬라임이 안 맞은 슬라임보다 가까워야 한다.
+    const SeenPosition self = a.history(a.selfId()).front();
+    float farthestHit = 0.0f;
+    float nearestMissed = 1e9f;
+    for (std::uint32_t id = 1; id <= 30; ++id)
+    {
+        if (a.history(id).empty())
+        {
+            continue;
+        }
+        const SeenPosition& seen = a.history(id).back();
+        const float distance = distanceBetween(self.x, self.y, seen.x, seen.y);
+        if (std::find(hitSlimes.begin(), hitSlimes.end(), id) != hitSlimes.end())
+        {
+            farthestHit = std::max(farthestHit, distance);
+        }
+        else
+        {
+            nearestMissed = std::min(nearestMissed, distance);
+        }
+    }
+    std::cout << "[INFO] farthest hit " << farthestHit << ", nearest missed " << nearestMissed << '\n';
+    check(farthestHit <= nearestMissed + 10.0f, "spin kick picks nearest targets");
+}
+
+// 서버를 --debug-slime-cluster 1 --debug-player-attack 10으로 띄워야 한다. 슬라임이 죽지 않는다.
+void testStun(std::uint16_t port)
+{
+    Client a(port);
+    Client b(port);
+    enterAndWait(a);
+    enterAndWait(b);
+    a.waitUntil(3s, [&] { return a.nearestSlime() != 0; });
+    b.waitUntil(3s, [&] { return b.nearestSlime() != 0; });
+
+    a.skill(proto::SKILL_ID_SPIN_KICK);
+    a.pump(500ms);
+    b.skill(proto::SKILL_ID_SPIN_KICK);
+    b.waitUntil(2s, [&] { return !b.skills().empty(); });
+    a.pump(2500ms);
+    b.pump(100ms);
+
+    std::uint32_t slime = 0;
+    for (const Hit& hit : a.allHits())
+    {
+        if (hit.attacker == a.selfId() && !b.hitsBy(b.selfId(), hit.target).empty())
+        {
+            slime = hit.target;
+            break;
+        }
+    }
+    check(slime != 0, "same slime stunned twice");
+    if (slime == 0)
+    {
+        return;
+    }
+
+    std::uint32_t firstStunned = 0;
+    std::uint32_t lastStunned = 0;
+    bool movedWhileStunned = false;
+    const auto& history = a.history(slime);
+    for (std::size_t i = 1; i < history.size(); ++i)
+    {
+        if (history[i].state != proto::ENTITY_STATE_STUNNED)
+        {
+            continue;
+        }
+        firstStunned = firstStunned == 0 ? history[i].tick : firstStunned;
+        lastStunned = history[i].tick;
+        movedWhileStunned = movedWhileStunned
+                         || (history[i - 1].state == proto::ENTITY_STATE_STUNNED
+                             && (history[i].x != history[i - 1].x || history[i].y != history[i - 1].y));
+    }
+    const std::uint32_t stunTicks = lastStunned - firstStunned + 1;
+    // a는 AOI 안 b의 스킬도 받으므로 처음과 마지막 기록이 각자의 스킬이다.
+    const std::uint32_t gap = a.skills().back().tick - a.skills().front().tick;
+    std::cout << "[INFO] stun ticks " << stunTicks << ", second stun after " << gap << '\n';
+    check(stunTicks == gap + 10, "second stun overwrites remaining time");
+    check(!movedWhileStunned, "slime does not move while stunned");
+
+    bool attackedWhileStunned = false;
+    for (const Hit& hit : a.allHits())
+    {
+        attackedWhileStunned = attackedWhileStunned
+                            || (hit.attacker == slime && hit.tick >= firstStunned && hit.tick < lastStunned);
+    }
+    check(!attackedWhileStunned, "slime does not attack while stunned");
+
+    check(a.waitUntil(6s, [&] {
+              for (const Hit& hit : a.allHits())
+              {
+                  if (hit.attacker == slime)
+                  {
+                      return true;
+                  }
+              }
+              for (const Hit& hit : b.allHits())
+              {
+                  if (hit.attacker == slime)
+                  {
+                      return true;
+                  }
+              }
+              b.pump(10ms);
+              return false;
+          }), "slime resumes attacking after stun");
+}
+
+// 서버를 --debug-player-hp 5 --debug-player-attack 1로 띄워야 한다.
+// HP 5는 슬라임의 두 번째 타격에 죽는다. 그 틱에 구르기가 겹치도록 맞춘다.
+void testRollDeath(std::uint16_t port)
+{
+    Client a(port);
+    enterAndWait(a);
+
+    for (int attempt = 1; attempt <= 9; ++attempt)
+    {
+        const std::uint32_t slime = waitForSlime(a);
+        const std::size_t deathsBefore = a.deaths().size();
+        const std::size_t hitsBefore = a.hitsBy(slime, a.selfId()).size();
+        a.target(slime);
+        a.waitUntil(30s, [&] { return a.hitsBy(slime, a.selfId()).size() > hitsBefore; });
+        const auto counter = a.hitsBy(slime, a.selfId());
+        if (counter.size() <= hitsBefore)
+        {
+            continue;
+        }
+
+        const std::uint32_t firstHit = counter.back().tick;
+        // 지연에 따라 도착 틱이 달라지므로 시도마다 보내는 시점을 바꾼다.
+        const std::uint32_t lead = 15 + static_cast<std::uint32_t>(attempt % 3);
+        a.waitUntil(3s, [&] { return a.lastTick() >= firstHit + lead; });
+        const SeenPosition self = a.position(a.selfId());
+        const SeenPosition seen = a.position(slime);
+        const float distance = std::max(distanceBetween(self.x, self.y, seen.x, seen.y), 1.0f);
+        a.skill(proto::SKILL_ID_ROLL, (seen.x - self.x) / distance, (seen.y - self.y) / distance);
+
+        a.waitUntil(3s, [&] { return a.deaths().size() > deathsBefore; });
+        if (a.deaths().size() <= deathsBefore || a.skills().empty())
+        {
+            a.waitUntil(5s, [&] { return a.position(a.selfId()).state != proto::ENTITY_STATE_DEAD; });
+            continue;
+        }
+
+        const Death death = a.deaths().back();
+        const SkillRecord roll = a.skills().back();
+        const std::uint32_t since = death.tick - roll.tick;
+        std::cout << "[INFO] attempt " << attempt << " died " << since << " ticks after roll\n";
+        if (since > 2)
+        {
+            a.waitUntil(5s, [&] { return a.position(a.selfId()).state != proto::ENTITY_STATE_DEAD; });
+            a.pump(3200ms);
+            continue;
+        }
+
+        a.pump(300ms);
+        const SeenPosition dead = a.position(a.selfId());
+        const float rolled = distanceBetween(self.x, self.y, dead.x, dead.y);
+        std::cout << "[INFO] rolled " << rolled << " before stopping\n";
+        if (rolled >= 89.0f)
+        {
+            // 마지막 구르기 틱에 죽으면 이미 90을 다 움직인 뒤다. 다시 시도한다.
+            a.waitUntil(5s, [&] { return a.position(a.selfId()).state != proto::ENTITY_STATE_DEAD; });
+            a.pump(3200ms);
+            continue;
+        }
+        check(rolled < 89.0f, "roll stops at death");
+        a.pump(500ms);
+        check(a.position(a.selfId()).x == dead.x && a.position(a.selfId()).y == dead.y, "dead player stays still");
+        check(a.skills().back().cooldownEndTick == roll.cooldownEndTick, "cooldown is kept after death");
+
+        const std::size_t rejectsBefore = a.rejectRecords().size();
+        a.skill(proto::SKILL_ID_SPIN_KICK);
+        a.pump(300ms);
+        check(a.rejectRecords().size() == rejectsBefore, "skill ignored while dead");
+        check(a.waitUntil(5s, [&] { return a.position(a.selfId()).state != proto::ENTITY_STATE_DEAD; }), "revived");
+        check(a.position(a.selfId()).hp == 5, "hp full after revive");
+        return;
+    }
+    check(false, "could not die during roll");
 }
 
 void testZoneFull(std::uint16_t port)
@@ -1170,7 +1641,23 @@ int main(int argc, char* argv[])
             }
             else if (mode == "deadreward")
             {
-                testDeadContributor(port);
+                testDeadContributor(port, false);
+            }
+            else if (mode == "deadlevel")
+            {
+                testDeadContributor(port, true);
+            }
+            else if (mode == "cluster")
+            {
+                testSpinMaxTargets(port);
+            }
+            else if (mode == "stun")
+            {
+                testStun(port);
+            }
+            else if (mode == "rolldeath")
+            {
+                testRollDeath(port);
             }
             WSACleanup();
             std::cout << (g_failures == 0 ? "ALL PASSED\n" : "FAILED: " + std::to_string(g_failures) + "\n");
@@ -1192,6 +1679,10 @@ int main(int argc, char* argv[])
         testLevelUp(port);
         testSharedKill(port);
         testContributionReset(port);
+        testSkillRules(port);
+        testRollHit(port);
+        testRollInputs(port);
+        testRollBoundary(port);
         testZoneFull(port);
 
         WSACleanup();
