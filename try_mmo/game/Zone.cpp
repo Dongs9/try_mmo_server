@@ -96,8 +96,17 @@ MoveResult Zone::setDestination(EntityId id, Vec2 destination)
         return MoveResult::PlayerDead;
     }
 
-    player.destination = destination;
     player.target.reset();
+    if (player.rollTicksLeft > 0)
+    {
+        // 대상은 바로 해제하고 이동은 구르기가 끝난 뒤 적용한다. 마지막 입력만 남긴다.
+        player.pendingDestination = destination;
+        player.pendingTarget.reset();
+    }
+    else
+    {
+        player.destination = destination;
+    }
     return MoveResult::Accepted;
 }
 
@@ -123,6 +132,13 @@ TargetResult Zone::setTarget(EntityId id, EntityId target)
         return TargetResult::TargetReturning;
     }
 
+    if (player.rollTicksLeft > 0)
+    {
+        player.pendingTarget = target;
+        player.pendingDestination.reset();
+        return TargetResult::Accepted;
+    }
+
     // 공격 주기 타이머는 건드리지 않는다. 대상 재지정으로 공격이 빨라지면 안 된다.
     player.target = target;
     player.destination.reset();
@@ -144,7 +160,8 @@ void Zone::spawnSlimes()
     {
         auto slime = std::make_unique<Slime>();
         slime->id = nextEntityId_++;
-        slime->spawnPoint = randomSlimeSpawnPoint();
+        slime->spawnPoint = options_.clusterSlimes ? randomPointNear(kEnterPosition, kSlimeClusterRadius)
+                                                   : randomSlimeSpawnPoint();
         slime->position = slime->spawnPoint;
         slime->hp = kSlimeMaxHp;
         slime->nextWanderTick = randomWanderDelay();
@@ -262,6 +279,10 @@ EntityState Zone::stateOf(const Player& player)
     {
         return EntityState::Dead;
     }
+    if (player.rolled)
+    {
+        return EntityState::Rolling;
+    }
     return player.moved ? EntityState::Moving : EntityState::Idle;
 }
 
@@ -270,6 +291,10 @@ EntityState Zone::stateOf(const Slime& slime)
     if (slime.mode == SlimeMode::Return)
     {
         return EntityState::Returning;
+    }
+    if (slime.stunned)
+    {
+        return EntityState::Stunned;
     }
     return slime.moved ? EntityState::Moving : EntityState::Idle;
 }

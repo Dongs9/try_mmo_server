@@ -22,6 +22,7 @@ classDiagram
         +onCombat(viewer, event)
         +onPlayerDeath(viewer, player, reviveTick)
         +onReward(player, event)
+        +onSkillUsed(viewer, event)
     }
     class TcpTransport {
         TCP와 길이 프리픽스
@@ -42,6 +43,7 @@ classDiagram
         +removePlayer(id)
         +setDestination(id, destination)
         +setTarget(id, target)
+        +useSkill(id, skill, direction)
         +tick()
     }
 

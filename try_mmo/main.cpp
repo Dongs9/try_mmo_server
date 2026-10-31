@@ -40,7 +40,7 @@ struct Options
     std::uint16_t port = kDefaultPort;
     int lagRttMs = 0;
     trymmo::ZoneOptions zone{trymmo::balance::kPlayerMaxHp, trymmo::balance::kPlayerAttack,
-                             trymmo::balance::kSlimeKillExp};
+                             trymmo::balance::kSlimeKillExp, false};
 };
 
 Options parseOptions(int argc, char* argv[])
@@ -68,6 +68,10 @@ Options parseOptions(int argc, char* argv[])
         else if (name == "--debug-kill-exp")
         {
             options.zone.slimeKillExp = std::stoi(argv[i + 1]);
+        }
+        else if (name == "--debug-slime-cluster")
+        {
+            options.zone.clusterSlimes = std::stoi(argv[i + 1]) != 0;
         }
     }
     return options;

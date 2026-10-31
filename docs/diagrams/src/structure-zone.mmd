@@ -9,6 +9,7 @@ classDiagram
         +removePlayer(id)
         +setDestination(id, destination)
         +setTarget(id, target)
+        +useSkill(id, skill, direction)
         +progressOf(id)
         +tick()
         -updatePlayers()
@@ -27,6 +28,11 @@ classDiagram
         +defense
         +exp
         +gold
+        +rollTicksLeft
+        +rollCooldownEndTick
+        +spinCooldownEndTick
+        +pendingDestination
+        +pendingTarget
         +destination
         +target
         +nextAttackTick
@@ -44,6 +50,7 @@ classDiagram
         +chaseTarget
         +nextAttackTick
         +respawnTick
+        +stunEndTick
         +contributions
     }
     class EntityView {

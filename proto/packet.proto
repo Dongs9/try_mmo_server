@@ -197,4 +197,5 @@ message SkillUsed {
   SkillId skill = 2;
   uint32 cooldown_end_tick = 3;  // 이 틱부터 다시 쓸 수 있다
   Vec2 direction = 4;            // 구르기 방향
+  uint32 server_tick = 5;        // 스킬이 시작된 틱
 }

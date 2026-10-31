@@ -5,7 +5,10 @@ flowchart TD
     revive -- 아니오 --> finish([다음 플레이어])
     doRevive --> finish
     dead -- 아니오 --> regen["1초마다 HP +1"]
-    regen --> target{대상 있음?}
+    regen --> rolling{구르기 중?}
+    rolling -- 예 --> roll["구르기 이동과 판정, 기본 공격 보류"]
+    roll --> finish
+    rolling -- 아니오 --> target{대상 있음?}
     target -- 아니오 --> move[목적지로 이동]
     move --> finish
     target -- 예 --> near["사거리 60까지 대상 쪽으로 이동"]

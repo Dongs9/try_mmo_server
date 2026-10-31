@@ -10,9 +10,10 @@ flowchart LR
     inside -- 아니오 --> ignore2
     inside -- 예 --> alive{플레이어 생존?}
     alive -- 아니오 --> ignore2
-    alive -- 예 --> dest["목적지 저장, 대상 해제"]
+    alive -- 예 --> dest["대상 해제, 목적지 저장<br/>구르기 중이면 끝난 뒤 적용"]
+    msg -- 5000 SkillReq --> skill[스킬 판정: 스킬 흐름 그림 참고]
     msg -- 3000 TargetReq --> self{플레이어 생존?}
     self -- 아니오 --> ignore2
     self -- 예 --> found{"대상이 살아 있고 복귀 중 아님?"}
     found -- 아니오 --> reject[RequestRejected 전송]
-    found -- 예 --> setTarget["대상 저장, 목적지 해제"]
+    found -- 예 --> setTarget["대상 저장, 목적지 해제<br/>구르기 중이면 끝난 뒤 적용"]

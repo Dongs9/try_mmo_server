@@ -47,6 +47,7 @@ void Zone::updatePlayers()
     for (const auto& [id, player] : players_)
     {
         player->moved = false;
+        player->rolled = false;
         if (player->reviveTick)
         {
             if (tick_ >= *player->reviveTick)
@@ -57,7 +58,12 @@ void Zone::updatePlayers()
         }
 
         updatePlayerRegen(*player);
-        if (player->target)
+        if (player->rollTicksLeft > 0)
+        {
+            // 구르는 동안 기본 공격을 보류한다. 대상과 공격 주기는 그대로 둔다.
+            updateRoll(*player);
+        }
+        else if (player->target)
         {
             updatePlayerAttack(*player);
         }
@@ -94,21 +100,27 @@ void Zone::updatePlayerAttack(Player& player)
     }
 
     player.nextAttackTick = tick_ + kPlayerAttackPeriodTicks;
-    const int damage = rollDamage(player.attack, kBasicAttackCoefficient, kSlimeDefense);
+    hitSlime(player, slime, kBasicAttackCoefficient, SkillKind::None);
+}
+
+bool Zone::hitSlime(Player& player, Slime& slime, float coefficient, SkillKind skill)
+{
+    const int damage = rollDamage(player.attack, coefficient, kSlimeDefense);
     slime.contributions[player.id] += std::min(damage, slime.hp);
     slime.hp = std::max(slime.hp - damage, 0);
-    broadcastCombat({player.id, slime.id, damage, slime.hp});
+    broadcastCombat({player.id, slime.id, damage, slime.hp, skill});
 
     if (slime.hp == 0)
     {
         killSlime(slime, player.id);
-        return;
+        return false;
     }
 
     // 전투 중에는 회복하지 않고, 가장 최근 공격자를 쫓는다.
     slime.mode = SlimeMode::Chase;
     slime.chaseTarget = player.id;
     slime.destination.reset();
+    return true;
 }
 
 void Zone::revivePlayer(Player& player)
@@ -125,6 +137,10 @@ void Zone::killPlayer(Player& player)
     player.reviveTick = reviveTick;
     player.target.reset();
     player.destination.reset();
+    player.pendingDestination.reset();
+    player.pendingTarget.reset();
+    player.rollTicksLeft = 0;  // 이동만 멈춘다. 쿨다운은 유지한다
+    player.rollHits.clear();
 
     for (const auto& [viewerId, viewer] : players_)
     {
@@ -140,6 +156,14 @@ void Zone::updateSlimes()
     for (const auto& [id, slime] : slimes_)
     {
         const Vec2 before = slime->position;
+        slime->stunned = tick_ < slime->stunEndTick;
+        if (slime->stunned)
+        {
+            // 기절 중에는 모드를 유지한 채 아무것도 하지 않는다. 풀리면 이전 행동을 잇는다.
+            slime->moved = false;
+            continue;
+        }
+
         switch (slime->mode)
         {
         case SlimeMode::Wander:
@@ -196,7 +220,8 @@ void Zone::updateChase(Slime& slime)
     }
 
     slime.nextAttackTick = tick_ + kSlimeAttackPeriodTicks;
-    const int damage = rollDamage(kSlimeAttack, kBasicAttackCoefficient, player.defense);
+    const float defense = player.rolled ? player.defense * kRollDefenseMultiplier : static_cast<float>(player.defense);
+    const int damage = rollDamage(kSlimeAttack, kBasicAttackCoefficient, defense);
     player.hp = std::max(player.hp - damage, 0);
     broadcastCombat({slime.id, player.id, damage, player.hp});
 
@@ -316,7 +341,7 @@ PlayerProgress Zone::progressOf(EntityId id) const
             player.maxHp, player.attack, player.defense};
 }
 
-int Zone::rollDamage(int attack, float coefficient, int defense)
+int Zone::rollDamage(int attack, float coefficient, float defense)
 {
     std::uniform_real_distribution<float> random(kDamageRandomMin, kDamageRandomMax);
     const float damage = attack * coefficient * 100.0f / (100.0f + defense) * random(random_);

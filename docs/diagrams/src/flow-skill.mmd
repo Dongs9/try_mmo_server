@@ -1,0 +1,17 @@
+flowchart TD
+    req[SkillReq 수신] --> dead{사망 중?}
+    dead -- 예 --> ignore[무시, 로그]
+    dead -- 아니오 --> rolling{구르기 중?}
+    rolling -- 예 --> reject["RequestRejected<br/>사유, 남은 쿨다운"]
+    rolling -- 아니오 --> cool{쿨다운 지남?}
+    cool -- 아니오 --> reject
+    cool -- 예 --> dir{"구르기면 단위 벡터?"}
+    dir -- 아니오 --> reject
+    dir -- 예 --> used["쿨다운 시작, SkillUsed 전송"]
+    used --> kind{스킬}
+    kind -- 회전차기 --> spin["반경 100 안 가까운 순 10마리<br/>1.6배 피해, 1초 기절"]
+    kind -- 구르기 --> roll[3틱 구르기 예약]
+    roll --> tick["틱마다 30 이동, 맵 경계에서 멈춤<br/>이동 경로 폭 60 안 슬라임에 2배 피해, 대상마다 1회"]
+    tick --> done{3틱 끝?}
+    done -- 아니오 --> tick
+    done -- 예 --> pending["예약 입력 적용<br/>이동 또는 대상, 마지막 입력만"]

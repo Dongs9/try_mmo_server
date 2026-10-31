@@ -74,8 +74,38 @@ proto::EntityState toMessage(EntityState state)
         return proto::ENTITY_STATE_RETURNING;
     case EntityState::Dead:
         return proto::ENTITY_STATE_DEAD;
+    case EntityState::Stunned:
+        return proto::ENTITY_STATE_STUNNED;
+    case EntityState::Rolling:
+        return proto::ENTITY_STATE_ROLLING;
     default:
         return proto::ENTITY_STATE_IDLE;
+    }
+}
+
+proto::SkillId toMessage(SkillKind skill)
+{
+    switch (skill)
+    {
+    case SkillKind::Roll:
+        return proto::SKILL_ID_ROLL;
+    case SkillKind::SpinKick:
+        return proto::SKILL_ID_SPIN_KICK;
+    default:
+        return proto::SKILL_ID_UNSPECIFIED;
+    }
+}
+
+SkillKind fromMessage(proto::SkillId skill)
+{
+    switch (skill)
+    {
+    case proto::SKILL_ID_ROLL:
+        return SkillKind::Roll;
+    case proto::SKILL_ID_SPIN_KICK:
+        return SkillKind::SpinKick;
+    default:
+        return SkillKind::None;
     }
 }
 
@@ -207,6 +237,9 @@ void GameServer::onFrame(ConnectionId connection, std::span<const std::byte> fra
         break;
     case proto::C2S_TARGET_REQ:
         handleTarget(connection, found->second, payload);
+        break;
+    case proto::C2S_SKILL_REQ:
+        handleSkill(connection, found->second, payload);
         break;
     default:
         logWarn("connection " + std::to_string(connection) + " sent unknown message " + std::to_string(msgId));
@@ -369,6 +402,68 @@ void GameServer::handleTarget(ConnectionId connection, Session& session, std::sp
     }
 }
 
+void GameServer::handleSkill(ConnectionId connection, Session& session, std::span<const std::byte> payload)
+{
+    proto::SkillReq request;
+    if (!decodePayload(payload, request))
+    {
+        logWarn("connection " + std::to_string(connection) + " sent malformed skill, closing");
+        transport_.close(connection);
+        return;
+    }
+
+    if (!session.player)
+    {
+        logWarn("connection " + std::to_string(connection) + " sent skill before enter");
+        return;
+    }
+
+    const Vec2 direction{request.direction().x(), request.direction().y()};
+    const SkillOutcome outcome = zone_.useSkill(*session.player, fromMessage(request.skill()), direction);
+
+    const auto reject = [&](proto::RejectReason reason) {
+        proto::RequestRejected message;
+        message.set_request(proto::C2S_SKILL_REQ);
+        message.set_reason(reason);
+        message.set_skill(request.skill());
+        message.set_cooldown_remaining_ms(outcome.cooldownRemainingTicks
+                                          * static_cast<std::uint32_t>(kTickInterval.count()));
+        transport_.send(connection, encodeFrame(proto::S2C_REQUEST_REJECTED, message));
+    };
+
+    switch (outcome.result)
+    {
+    case SkillResult::UnknownSkill:
+        reject(proto::REJECT_REASON_INVALID_SKILL);
+        break;
+    case SkillResult::Cooldown:
+        reject(proto::REJECT_REASON_SKILL_COOLDOWN);
+        break;
+    case SkillResult::Rolling:
+        reject(proto::REJECT_REASON_SKILL_WHILE_ROLLING);
+        break;
+    case SkillResult::InvalidDirection:
+        reject(proto::REJECT_REASON_INVALID_DIRECTION);
+        break;
+    case SkillResult::PlayerDead:
+        logWarn("player " + std::to_string(*session.player) + " skill ignored while dead");
+        break;
+    case SkillResult::Accepted:
+        break;
+    }
+}
+
+void GameServer::onSkillUsed(EntityId viewer, const SkillEvent& event)
+{
+    proto::SkillUsed message;
+    message.set_entity_id(event.caster);
+    message.set_skill(toMessage(event.skill));
+    message.set_cooldown_end_tick(event.cooldownEndTick);
+    *message.mutable_direction() = toMessage(event.direction);
+    message.set_server_tick(event.tick);
+    transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_SKILL_USED, message));
+}
+
 void GameServer::onCombat(EntityId viewer, const CombatEvent& event)
 {
     proto::CombatResult message;
@@ -376,6 +471,7 @@ void GameServer::onCombat(EntityId viewer, const CombatEvent& event)
     message.set_target_id(event.target);
     message.set_damage(event.damage);
     message.set_target_hp(event.targetHp);
+    message.set_skill(toMessage(event.skill));
     transport_.send(playerConnections_.at(viewer), encodeFrame(proto::S2C_COMBAT_RESULT, message));
 }
 

@@ -39,11 +39,13 @@ private:
     void onCombat(EntityId viewer, const CombatEvent& event) override;
     void onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick) override;
     void onReward(EntityId player, const RewardEvent& event) override;
+    void onSkillUsed(EntityId viewer, const SkillEvent& event) override;
 
     bool allowRequest(ConnectionId connection, Session& session);
     void handleEnter(ConnectionId connection, Session& session);
     void handleMove(ConnectionId connection, Session& session, std::span<const std::byte> payload);
     void handleTarget(ConnectionId connection, Session& session, std::span<const std::byte> payload);
+    void handleSkill(ConnectionId connection, Session& session, std::span<const std::byte> payload);
 
     ITransport& transport_;
     Zone zone_;

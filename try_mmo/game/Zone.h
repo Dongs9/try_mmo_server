@@ -30,7 +30,32 @@ enum class EntityState : std::uint8_t
     Idle,
     Moving,
     Returning,
-    Dead
+    Dead,
+    Stunned,
+    Rolling
+};
+
+enum class SkillKind : std::uint8_t
+{
+    None,  // 기본 공격
+    Roll,
+    SpinKick
+};
+
+enum class SkillResult : std::uint8_t
+{
+    Accepted,
+    UnknownSkill,
+    Cooldown,
+    Rolling,
+    InvalidDirection,
+    PlayerDead
+};
+
+struct SkillOutcome
+{
+    SkillResult result = SkillResult::Accepted;
+    std::uint32_t cooldownRemainingTicks = 0;
 };
 
 enum class DespawnReason : std::uint8_t
@@ -82,6 +107,16 @@ struct CombatEvent
     EntityId target = 0;
     int damage = 0;
     int targetHp = 0;
+    SkillKind skill = SkillKind::None;
+};
+
+struct SkillEvent
+{
+    EntityId caster = 0;
+    SkillKind skill = SkillKind::None;
+    std::uint32_t cooldownEndTick = 0;
+    Vec2 direction;
+    std::uint32_t tick = 0;
 };
 
 struct PlayerProgress
@@ -117,6 +152,7 @@ public:
     virtual void onCombat(EntityId viewer, const CombatEvent& event) = 0;
     virtual void onPlayerDeath(EntityId viewer, EntityId player, std::uint32_t reviveTick) = 0;
     virtual void onReward(EntityId player, const RewardEvent& event) = 0;
+    virtual void onSkillUsed(EntityId viewer, const SkillEvent& event) = 0;
 };
 
 struct ZoneOptions
@@ -125,6 +161,7 @@ struct ZoneOptions
     int playerMaxHp;
     int playerAttack;
     int slimeKillExp;
+    bool clusterSlimes;  // 슬라임을 입장 위치에 모은다. 최대 대상 수 시험용
 };
 
 // 맵 하나의 세계 상태. 틱마다 플레이어, 슬라임, AOI, 스냅샷 순서로 진행한다.
@@ -139,6 +176,7 @@ public:
     void removePlayer(EntityId id);
     MoveResult setDestination(EntityId id, Vec2 destination);
     TargetResult setTarget(EntityId id, EntityId target);
+    SkillOutcome useSkill(EntityId id, SkillKind skill, Vec2 direction);
     void tick();
 
     PlayerProgress progressOf(EntityId id) const;
@@ -159,6 +197,14 @@ private:
         int gold = 0;
         std::optional<Vec2> destination;
         std::optional<EntityId> target;
+        int rollTicksLeft = 0;
+        Vec2 rollDirection;
+        bool rolled = false;  // 이번 틱에 구르기로 움직였는지
+        std::unordered_set<EntityId> rollHits;  // 이번 구르기에서 이미 맞은 슬라임
+        std::optional<Vec2> pendingDestination;  // 구르기가 끝나면 적용할 입력
+        std::optional<EntityId> pendingTarget;
+        std::uint32_t rollCooldownEndTick = 0;
+        std::uint32_t spinCooldownEndTick = 0;
         bool moved = false;  // 이번 틱에 위치가 바뀌었는지. 상태는 이 값으로 정한다
         std::uint32_t nextAttackTick = 0;
         std::uint32_t nextRegenTick = 0;
@@ -187,6 +233,8 @@ private:
         bool moved = false;
         std::uint32_t nextAttackTick = 0;
         std::uint32_t respawnTick = 0;
+        std::uint32_t stunEndTick = 0;
+        bool stunned = false;
         std::unordered_map<EntityId, int> contributions;  // 플레이어별 누적 피해
     };
 
@@ -213,6 +261,11 @@ private:
     void revivePlayer(Player& player);
     void killPlayer(Player& player);
 
+    // ZoneSkill.cpp: 스킬
+    void spinKick(Player& player);
+    void updateRoll(Player& player);
+    void finishRoll(Player& player);
+
     // ZoneCombat.cpp: 슬라임 행동
     void updateSlimes();
     void updateWander(Slime& slime);
@@ -228,7 +281,9 @@ private:
     void levelUp(Player& player);
 
     // ZoneCombat.cpp: 공통
-    int rollDamage(int attack, float coefficient, int defense);
+    int rollDamage(int attack, float coefficient, float defense);
+    // 슬라임이 살아남으면 true.
+    bool hitSlime(Player& player, Slime& slime, float coefficient, SkillKind skill);
     void clearTargetsOn(EntityId slime);
     void broadcastCombat(const CombatEvent& event);
     std::uint32_t randomWanderDelay();

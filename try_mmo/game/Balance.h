@@ -34,6 +34,20 @@ inline constexpr float kBasicAttackCoefficient = 1.0f;
 inline constexpr float kDamageRandomMin = 0.98f;
 inline constexpr float kDamageRandomMax = 1.02f;
 
+inline constexpr float kRollCoefficient = 2.0f;
+inline constexpr float kRollStepPerTick = 30.0f;  // 초당 300
+inline constexpr int kRollTicks = 3;
+inline constexpr float kRollHalfWidth = 30.0f;  // 경로 폭 60
+inline constexpr float kRollDefenseMultiplier = 1.5f;
+inline constexpr int kRollCooldownTicks = 30;
+inline constexpr float kDirectionTolerance = 0.01f;
+
+inline constexpr float kSpinCoefficient = 1.6f;
+inline constexpr float kSpinRadius = 100.0f;
+inline constexpr std::size_t kSpinMaxTargets = 10;
+inline constexpr int kSpinCooldownTicks = 55;
+inline constexpr int kStunTicks = 10;
+
 inline constexpr int kSlimeCount = 30;
 inline constexpr int kSlimeMaxHp = 120;
 inline constexpr int kSlimeLevel = 1;
@@ -41,6 +55,7 @@ inline constexpr int kSlimeAttack = 5;
 inline constexpr int kSlimeDefense = 5;
 inline constexpr float kSlimeSpawnRadius = 600.0f;
 inline constexpr float kSlimeSafeRadius = 100.0f;  // 입장 위치 주변은 생성 구역에서 뺀다
+inline constexpr float kSlimeClusterRadius = 50.0f;  // 최대 대상 수 시험 전용
 inline constexpr float kSlimeWanderRadius = 100.0f;
 inline constexpr float kSlimeWanderStepPerTick = 4.0f;  // 초당 40
 inline constexpr float kSlimeChaseStepPerTick = 8.0f;   // 초당 80

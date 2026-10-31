@@ -84,6 +84,7 @@
     <ClCompile Include="game\GameServer.cpp" />
     <ClCompile Include="game\Zone.cpp" />
     <ClCompile Include="game\ZoneCombat.cpp" />
+    <ClCompile Include="game\ZoneSkill.cpp" />
     <ClCompile Include="net\LagTransport.cpp" />
     <ClCompile Include="net\TcpTransport.cpp" />
   </ItemGroup>

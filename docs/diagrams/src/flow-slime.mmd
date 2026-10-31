@@ -4,6 +4,9 @@ stateDiagram-v2
     Wander --> Chase : 피격
     Chase --> Return : 생성 지점 500 초과, 대상 사망, 연결 끊김
     Chase --> Dead : HP 0
+    Chase --> Stunned : 회전차기
+    Stunned --> Chase : 1초 후 행동 재개
+    Stunned --> Dead : HP 0
     Return --> Wander : 도착, HP 회복, 기여 초기화
     Dead --> Wander : 30초 후 리스폰
 
@@ -11,3 +14,4 @@ stateDiagram-v2
     Chase : 최근 공격자 추적, 속도 80, 2초마다 공격
     Return : 복귀, 속도 160, 피격과 공격 없음
     Dead : 사망, AOI에서 제외
+    Stunned : 기절, 이동과 공격 정지, 피격 가능

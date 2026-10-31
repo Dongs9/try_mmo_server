@@ -30,6 +30,10 @@ TCP 스트림을 프레임으로 자르는 일은 `TcpTransport`가 합니다.
 
 ![플레이어 행동](images/flow-attack.svg)
 
+## 스킬
+
+![스킬](images/flow-skill.svg)
+
 ## 보상과 레벨업
 
 ![보상과 레벨업](images/flow-reward.svg)
