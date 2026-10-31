@@ -192,10 +192,6 @@ public:
                 closed_ = true;
                 return;
             }
-            if (discardInbound_)
-            {
-                continue;
-            }
             const auto* bytes = reinterpret_cast<const std::byte*>(buffer);
             inbox_.insert(inbox_.end(), bytes, bytes + received);
             extractFrames();
@@ -213,8 +209,19 @@ public:
         return predicate();
     }
 
-    // 수신만 비우고 해석하지 않는다. 많은 클라이언트를 유지할 때 봇 부하를 줄인다.
-    void discardInbound() { discardInbound_ = true; }
+    // 대기 없이 소켓이 빌 때까지 읽고 버린다. 많은 클라이언트를 유지할 때 쓴다.
+    void drain()
+    {
+        char buffer[65536];
+        WSAPOLLFD descriptor{socket_, POLLRDNORM, 0};
+        while (!closed_ && WSAPoll(&descriptor, 1, 0) > 0)
+        {
+            if (recv(socket_, buffer, sizeof(buffer), 0) <= 0)
+            {
+                closed_ = true;
+            }
+        }
+    }
 
     bool closed() const { return closed_; }
     proto::EnterResult enterResult() const { return enterResult_; }
@@ -391,7 +398,6 @@ private:
 
     SOCKET socket_;
     bool closed_ = false;
-    bool discardInbound_ = false;
     std::vector<std::byte> inbox_;
     proto::EnterResult enterResult_ = proto::ENTER_RESULT_UNSPECIFIED;
     std::uint32_t selfId_ = 0;
@@ -1623,12 +1629,11 @@ void testZoneFull(std::uint16_t port)
     {
         clients.push_back(std::make_unique<Client>(port));
         allEntered = enterAndWait(*clients.back()) && clients.back()->enterResult() == proto::ENTER_RESULT_OK && allEntered;
-        clients.back()->discardInbound();
 
         // 읽지 않는 클라이언트는 서버가 outbox 한도로 끊으므로 입장 중에도 수신을 비운다.
         for (const auto& client : clients)
         {
-            client->pump(1ms);
+            client->drain();
         }
     }
     check(allEntered, "100 clients entered");
