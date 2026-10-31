@@ -156,7 +156,7 @@ void Zone::tick()
 
 void Zone::spawnSlimes()
 {
-    for (int i = 0; i < kSlimeCount; ++i)
+    for (int i = 0; i < options_.slimeCount; ++i)
     {
         auto slime = std::make_unique<Slime>();
         slime->id = nextEntityId_++;

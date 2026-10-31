@@ -162,6 +162,7 @@ struct ZoneOptions
     int playerAttack;
     int slimeKillExp;
     bool clusterSlimes;  // 슬라임을 입장 위치에 모은다. 최대 대상 수 시험용
+    int slimeCount;      // 슬라임 밀도 측정용
 };
 
 // 맵 하나의 세계 상태. 틱마다 플레이어, 슬라임, AOI, 스냅샷 순서로 진행한다.
