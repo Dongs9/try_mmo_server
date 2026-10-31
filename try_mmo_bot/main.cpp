@@ -192,6 +192,10 @@ public:
                 closed_ = true;
                 return;
             }
+            if (discardInbound_)
+            {
+                continue;
+            }
             const auto* bytes = reinterpret_cast<const std::byte*>(buffer);
             inbox_.insert(inbox_.end(), bytes, bytes + received);
             extractFrames();
@@ -208,6 +212,9 @@ public:
         }
         return predicate();
     }
+
+    // 수신만 비우고 해석하지 않는다. 많은 클라이언트를 유지할 때 봇 부하를 줄인다.
+    void discardInbound() { discardInbound_ = true; }
 
     bool closed() const { return closed_; }
     proto::EnterResult enterResult() const { return enterResult_; }
@@ -384,6 +391,7 @@ private:
 
     SOCKET socket_;
     bool closed_ = false;
+    bool discardInbound_ = false;
     std::vector<std::byte> inbox_;
     proto::EnterResult enterResult_ = proto::ENTER_RESULT_UNSPECIFIED;
     std::uint32_t selfId_ = 0;
@@ -1316,15 +1324,32 @@ void testRollHit(std::uint16_t port)
     }
 }
 
+// 첫 타격까지 진행한다. 앞 시나리오의 슬라임이 복귀 중이면 거부되므로 다른 슬라임을 고른다.
+std::uint32_t engageSlime(Client& client)
+{
+    for (int attempt = 0; attempt < 5; ++attempt)
+    {
+        const std::uint32_t slime = waitForSlime(client);
+        const std::size_t rejects = client.rejects().size();
+        client.target(slime);
+        client.waitUntil(30s, [&] { return !client.hitsBy(client.selfId(), slime).empty() || client.rejects().size() > rejects; });
+        if (!client.hitsBy(client.selfId(), slime).empty())
+        {
+            return slime;
+        }
+        client.pump(1s);
+    }
+    return 0;
+}
+
 void testRollInputs(std::uint16_t port)
 {
     Client a(port);
     enterAndWait(a);
-    const std::uint32_t attackTarget = waitForSlime(a);
 
     // 구르기 전에 지정한 대상은 끝난 뒤 이어서 공격한다.
-    a.target(attackTarget);
-    a.waitUntil(30s, [&] { return !a.hitsBy(a.selfId(), attackTarget).empty(); });
+    const std::uint32_t attackTarget = engageSlime(a);
+    check(attackTarget != 0, "engaged a slime");
     a.skill(proto::SKILL_ID_ROLL, 1.0f, 0.0f);
     check(a.waitUntil(4s, [&] { return a.hitsBy(a.selfId(), attackTarget).size() >= 2; }),
           "attack resumes after roll");
@@ -1341,7 +1366,12 @@ void testRollInputs(std::uint16_t port)
     // 구르기 중 입력은 마지막 것만 남는다. 대상 뒤의 이동이 이긴다.
     a.waitUntil(5s, [&] { return !isUnderCooldown(a, a.skills().back().cooldownEndTick + 1); });
     const std::uint32_t skipped = waitForSlime(a, pending);
-    const std::size_t hitsBefore = a.hitsBy(a.selfId(), skipped).size();
+    const auto basicHits = [&] {
+        const auto hits = a.hitsBy(a.selfId(), skipped);
+        return std::count_if(hits.begin(), hits.end(),
+                             [](const Hit& hit) { return hit.skill == proto::SKILL_ID_UNSPECIFIED; });
+    };
+    const auto hitsBefore = basicHits();
     const SeenPosition self = a.position(a.selfId());
     const float destinationX = self.x < 800.0f ? self.x + 120.0f : self.x - 120.0f;
     a.skill(proto::SKILL_ID_ROLL, 0.0f, 1.0f);
@@ -1350,7 +1380,8 @@ void testRollInputs(std::uint16_t port)
     check(a.waitUntil(5s, [&] {
               return a.position(a.selfId()).x == destinationX && a.position(a.selfId()).y == self.y;
           }), "move during roll applies after");
-    check(a.hitsBy(a.selfId(), skipped).size() == hitsBefore, "last input wins over target");
+    // 구르기 경로의 스킬 피해는 대상 지정과 무관하므로 기본 공격만 센다.
+    check(basicHits() == hitsBefore, "last input wins over target");
 }
 
 void testRollBoundary(std::uint16_t port)
@@ -1532,7 +1563,7 @@ void testRollDeath(std::uint16_t port)
 
         const std::uint32_t firstHit = counter.back().tick;
         // 지연에 따라 도착 틱이 달라지므로 시도마다 보내는 시점을 바꾼다.
-        const std::uint32_t lead = 15 + static_cast<std::uint32_t>(attempt % 3);
+        const std::uint32_t lead = 18 + static_cast<std::uint32_t>(attempt % 3);
         a.waitUntil(3s, [&] { return a.lastTick() >= firstHit + lead; });
         const SeenPosition self = a.position(a.selfId());
         const SeenPosition seen = a.position(slime);
@@ -1592,14 +1623,12 @@ void testZoneFull(std::uint16_t port)
     {
         clients.push_back(std::make_unique<Client>(port));
         allEntered = enterAndWait(*clients.back()) && clients.back()->enterResult() == proto::ENTER_RESULT_OK && allEntered;
+        clients.back()->discardInbound();
 
         // 읽지 않는 클라이언트는 서버가 outbox 한도로 끊으므로 입장 중에도 수신을 비운다.
-        if (i % 5 == 0)
+        for (const auto& client : clients)
         {
-            for (const auto& client : clients)
-            {
-                client->pump(2ms);
-            }
+            client->pump(1ms);
         }
     }
     check(allEntered, "100 clients entered");
